@@ -6,30 +6,30 @@ export class CreateVmDto {
   @ApiProperty()
   @IsString()
   @MaxLength(64)
-  name: string;
+  name!: string;
 
   @ApiProperty()
   @IsUUID()
-  poolId: string;
+  poolId!: string;
 
   @ApiProperty({ description: 'Template ID (from VmTemplate table)' })
   @IsString()
-  templateId: string;
+  templateId!: string;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  cpuCores: number;
+  cpuCores!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(512)
-  memoryMb: number;
+  memoryMb!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(5)
-  diskGb: number;
+  diskGb!: number;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -40,7 +40,7 @@ export class CreateVmDto {
 export class VmActionDto {
   @ApiProperty({ enum: ['start', 'stop', 'restart', 'shutdown'] })
   @IsEnum(['start', 'stop', 'restart', 'shutdown'])
-  action: 'start' | 'stop' | 'restart' | 'shutdown';
+  action!: 'start' | 'stop' | 'restart' | 'shutdown';
 }
 
 export class ResizeVmDto {
@@ -66,30 +66,30 @@ export class ResizeVmDto {
 export class ReinstallVmDto {
   @ApiProperty()
   @IsString()
-  templateId: string;
+  templateId!: string;
 }
 
 export class VmResponseDto {
   @ApiProperty()
-  id: string;
+  id!: string;
 
   @ApiProperty()
-  userId: string;
+  userId!: string;
 
   @ApiProperty()
-  name: string;
+  name!: string;
 
   @ApiProperty({ enum: VmStatus })
-  status: string;
+  status!: string;
 
   @ApiProperty()
-  cpuCores: number;
+  cpuCores!: number;
 
   @ApiProperty()
-  memoryMb: number;
+  memoryMb!: number;
 
   @ApiProperty()
-  diskGb: number;
+  diskGb!: number;
 
   @ApiPropertyOptional()
   proxmoxId?: number;
@@ -98,8 +98,8 @@ export class VmResponseDto {
   ipAddress?: string;
 
   @ApiProperty()
-  createdAt: Date;
+  createdAt!: Date;
 
   @ApiProperty()
-  updatedAt: Date;
+  updatedAt!: Date;
 }

@@ -58,7 +58,7 @@ export class VoucherService {
     });
     if (alreadyRedeemed) throw new BadRequestException('Voucher already redeemed by this user');
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       await tx.voucherCode.update({
         where: { id: voucher.id },
         data: { currentRedemptions: { increment: 1 } },
@@ -100,12 +100,12 @@ export class VoucherService {
 
   async getVoucherStats() {
     const all = await this.prisma.voucherCode.findMany();
-    const totalAmount = all.reduce((s, v) => s + v.amount * v.currentRedemptions, 0);
+    const totalValueRedeemed = all.reduce((s: number, v) => s + v.amount * v.currentRedemptions, 0);
     return {
       totalVouchers: all.length,
-      totalRedemptions: all.reduce((s, v) => s + v.currentRedemptions, 0),
-      totalValueRedeemed: totalAmount,
-      activeVouchers: all.filter((v) => v.isActive).length,
+      totalRedemptions: all.reduce((s: number, v) => s + v.currentRedemptions, 0),
+      totalValueRedeemed,
+      activeVouchers: all.filter((v: any) => v.isActive).length,
     };
   }
 }

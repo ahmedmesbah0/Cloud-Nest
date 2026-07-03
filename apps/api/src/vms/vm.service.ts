@@ -32,7 +32,7 @@ export class VmService {
     });
     if (!template) throw new BadRequestException('Template not found');
 
-    const vm = await this.prisma.$transaction(async (tx) => {
+    const vm = await this.prisma.$transaction(async (tx: any) => {
       const vm = await tx.vm.create({
         data: {
           userId,

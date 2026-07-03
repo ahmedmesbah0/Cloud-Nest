@@ -5,7 +5,7 @@ export class CreateVoucherDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  amount: number;
+  amount!: number;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -29,5 +29,5 @@ export class RedeemVoucherDto {
   @ApiProperty()
   @IsString()
   @MaxLength(20)
-  code: string;
+  code!: string;
 }

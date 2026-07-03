@@ -5,7 +5,7 @@ export class CreditDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  amount: number;
+  amount!: number;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -17,7 +17,7 @@ export class DebitDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  amount: number;
+  amount!: number;
 
   @ApiPropertyOptional()
   @IsOptional()

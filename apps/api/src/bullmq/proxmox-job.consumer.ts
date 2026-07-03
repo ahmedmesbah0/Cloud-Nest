@@ -49,7 +49,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
             action: auditLog.action,
             resource: auditLog.resource,
             resourceId: auditLog.resourceId,
-            metadata: { idempotencyKey, payload },
+            metadata: { idempotencyKey, payload } as any,
           },
         });
       }

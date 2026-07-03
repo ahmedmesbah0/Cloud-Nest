@@ -4,22 +4,22 @@ import { ApiProperty } from '@nestjs/swagger';
 export class CreatePoolDto {
   @ApiProperty()
   @IsString()
-  userId: string;
+  userId!: string;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  totalCores: number;
+  totalCores!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  totalMemoryMb: number;
+  totalMemoryMb!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  totalDiskGb: number;
+  totalDiskGb!: number;
 
   @ApiProperty({ required: false })
   @IsOptional()
@@ -57,26 +57,26 @@ export class UpdatePoolDto {
 export class AllocateResourcesDto {
   @ApiProperty()
   @IsString()
-  poolId: string;
+  poolId!: string;
 
   @ApiProperty()
   @IsString()
-  vmId: string;
+  vmId!: string;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  cores: number;
+  cores!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  memoryMb: number;
+  memoryMb!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  diskGb: number;
+  diskGb!: number;
 
   @ApiProperty({ required: false })
   @IsOptional()

@@ -32,7 +32,7 @@ export class WalletService {
   async credit(userId: string, amount: number, reference?: string, metadata?: Record<string, unknown>) {
     if (amount <= 0) throw new BadRequestException('Amount must be positive');
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       let wallet = await tx.wallet.findUnique({ where: { userId } });
       if (!wallet) {
         wallet = await tx.wallet.create({ data: { userId } });
@@ -60,7 +60,7 @@ export class WalletService {
   async debit(userId: string, amount: number, reference?: string, metadata?: Record<string, unknown>) {
     if (amount <= 0) throw new BadRequestException('Amount must be positive');
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       let wallet = await tx.wallet.findUnique({ where: { userId } });
       if (!wallet) {
         wallet = await tx.wallet.create({ data: { userId } });

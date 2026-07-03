@@ -56,10 +56,10 @@ export class ResourcePoolService {
     if (!pool) throw new BadRequestException('Resource pool not found');
 
     return {
-      cores: pool.allocations.reduce((sum, a) => sum + a.cores, 0),
-      memoryMb: pool.allocations.reduce((sum, a) => sum + a.memoryMb, 0),
-      diskGb: pool.allocations.reduce((sum, a) => sum + a.diskGb, 0),
-      ips: pool.allocations.reduce((sum, a) => sum + (a.ips ?? 0), 0),
+      cores: pool.allocations.reduce((sum: number, a) => sum + a.cores, 0),
+      memoryMb: pool.allocations.reduce((sum: number, a) => sum + a.memoryMb, 0),
+      diskGb: pool.allocations.reduce((sum: number, a) => sum + a.diskGb, 0),
+      ips: pool.allocations.reduce((sum: number, a) => sum + (a.ips ?? 0), 0),
     };
   }
 
@@ -71,10 +71,10 @@ export class ResourcePoolService {
     if (!pool) throw new BadRequestException('Resource pool not found');
 
     const used = {
-      cores: pool.allocations.reduce((sum, a) => sum + a.cores, 0),
-      memoryMb: pool.allocations.reduce((sum, a) => sum + a.memoryMb, 0),
-      diskGb: pool.allocations.reduce((sum, a) => sum + a.diskGb, 0),
-      ips: pool.allocations.reduce((sum, a) => sum + (a.ips ?? 0), 0),
+      cores: pool.allocations.reduce((sum: number, a) => sum + a.cores, 0),
+      memoryMb: pool.allocations.reduce((sum: number, a) => sum + a.memoryMb, 0),
+      diskGb: pool.allocations.reduce((sum: number, a) => sum + a.diskGb, 0),
+      ips: pool.allocations.reduce((sum: number, a) => sum + (a.ips ?? 0), 0),
     };
 
     return {
@@ -116,16 +116,14 @@ export class ResourcePoolService {
   async allocateResources(
     allocation: PoolAllocation,
   ): Promise<{ success: boolean; message: string }> {
-    return this.prisma.$transaction(async (tx) => {
-      const pools = await tx.$queryRawUnsafe<
-        Array<{
-          id: string;
-          totalCores: number;
-          totalMemoryMb: number;
-          totalDiskGb: number;
-          totalIps: number;
-        }>
-      >(
+    return this.prisma.$transaction(async (tx: any) => {
+      const pools: Array<{
+        id: string;
+        totalCores: number;
+        totalMemoryMb: number;
+        totalDiskGb: number;
+        totalIps: number;
+      }> = await tx.$queryRawUnsafe(
         `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb", "totalIps" FROM "ResourcePool" WHERE id = $1 FOR UPDATE`,
         allocation.poolId,
       );
@@ -135,14 +133,12 @@ export class ResourcePoolService {
         throw new BadRequestException('Resource pool not found');
       }
 
-      const allocations = await tx.$queryRawUnsafe<
-        Array<{
-          cores: number;
-          memoryMb: number;
-          diskGb: number;
-          ips: number;
-        }>
-      >(
+      const allocations: Array<{
+        cores: number;
+        memoryMb: number;
+        diskGb: number;
+        ips: number;
+      }> = await tx.$queryRawUnsafe(
         `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb", COALESCE(SUM(ips), 0) as ips FROM "ResourceAllocation" WHERE "poolId" = $1`,
         allocation.poolId,
       );

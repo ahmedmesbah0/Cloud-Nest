@@ -16,6 +16,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npx prisma generate --config prisma.config.ts
       - run: npm run lint -w apps/api
       - run: npm run typecheck -w apps/api
       - run: npm run typecheck -w apps/web
@@ -29,4 +30,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npx prisma generate --config prisma.config.ts
       - run: npm run test -w apps/api
