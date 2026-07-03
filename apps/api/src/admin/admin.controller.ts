@@ -15,8 +15,6 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from './admin.guard';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-
 @ApiTags('Admin')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminGuard)

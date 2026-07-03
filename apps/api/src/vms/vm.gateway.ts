@@ -6,7 +6,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
 @WebSocketGateway({

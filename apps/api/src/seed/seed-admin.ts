@@ -1,7 +1,5 @@
 import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { randomBytes } from 'node:crypto';
-
 const prisma = new PrismaClient();
 
 export async function seedAdmin() {

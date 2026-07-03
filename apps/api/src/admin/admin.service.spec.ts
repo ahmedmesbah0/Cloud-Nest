@@ -81,7 +81,7 @@ describe('AdminService', () => {
           return vms.length;
         }),
         findMany: jest.fn(({ skip, take, orderBy, include }: any) => {
-          let vms = Array.from(store.vms.values());
+          const vms = Array.from(store.vms.values());
           if (orderBy?.createdAt === 'desc') vms.sort((a: any, b: any) => b.createdAt - a.createdAt);
           const result = vms.slice(skip || 0, (skip || 0) + (take || 50));
           if (include?.user) {
@@ -181,7 +181,7 @@ describe('AdminService', () => {
       auditLog: {
         count: jest.fn(() => store.auditLogs.size),
         findMany: jest.fn(({ skip, take, orderBy, include }: any) => {
-          let logs = Array.from(store.auditLogs.values());
+          const logs = Array.from(store.auditLogs.values());
           if (orderBy?.createdAt === 'desc') logs.sort((a: any, b: any) => b.createdAt - a.createdAt);
           const result = logs.slice(skip || 0, (skip || 0) + (take || 100));
           if (include?.user) {

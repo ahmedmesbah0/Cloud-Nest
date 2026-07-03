@@ -7,8 +7,8 @@ import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 async function testProxmox() {
   const app = await NestFactory.createApplicationContext(AppModule);
   const proxmox = app.get(ProxmoxService);
-  const prisma = app.get(PrismaService);
-  const jobService = app.get(ProxmoxJobService);
+  app.get(PrismaService);
+  app.get(ProxmoxJobService);
 
   console.log('=== Proxmox Connection Test ===\n');
 
