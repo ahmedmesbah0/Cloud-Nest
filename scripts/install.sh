@@ -528,6 +528,84 @@ print_summary() {
   echo -e "System is ready for production."
 }
 
+perform_install() {
+  ensure_system_packages
+  ensure_nodejs
+  ensure_pm2
+  ensure_postgres
+  ensure_redis
+  clone_or_update_repo
+  write_env_file
+  install_dependencies
+  setup_prisma
+  seed_admin_account
+  build_project
+  write_pm2_config
+  start_services
+  run_health_checks
+  print_summary
+}
+
+perform_update() {
+  log_section "Updating CloudNest"
+  if [ ! -d "$INSTALL_DIR" ]; then
+    err "Installation not found at $INSTALL_DIR"
+    return 1
+  fi
+  cd "$INSTALL_DIR"
+  info "Fetching latest from origin/$INSTALL_BRANCH"
+  git fetch origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+  git checkout "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+  git pull --ff-only origin "$INSTALL_BRANCH" || true
+  info "Installing dependencies and rebuilding"
+  npm install --no-fund --no-audit || true
+  npm run build || true
+  pm2 restart cloudnest-api cloudnest-web >/dev/null 2>&1 || pm2 start "$INSTALL_DIR/ecosystem.config.cjs" --env production >/dev/null 2>&1 || true
+  pm2 save >/dev/null 2>&1 || true
+  ok "Update complete"
+}
+
+perform_uninstall() {
+  log_section "Uninstalling CloudNest"
+  if [ -n "${UNINSTALL_YES:-}" ] && [ "$UNINSTALL_YES" = "1" ]; then
+    confirm_yes=1
+  else
+    echo ""
+    read -rp "Are you sure you want to uninstall CloudNest and remove $INSTALL_DIR? (type 'yes' to confirm): " confirm
+    if [ "$confirm" != "yes" ]; then
+      warn "Aborting uninstall"
+      return 1
+    fi
+  fi
+
+  pm2 delete cloudnest-api cloudnest-web >/dev/null 2>&1 || true
+  pm2 save >/dev/null 2>&1 || true
+  if [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    ok "Removed $INSTALL_DIR"
+  else
+    warn "Installation directory not found: $INSTALL_DIR"
+  fi
+
+  if [ -z "${SKIP_DB_DROP:-}" ]; then
+    echo ""
+    read -rp "Drop PostgreSQL database and user 'cloudnest'? This is irreversible. (type 'yes' to drop, anything else to skip): " dropdb_confirm
+    if [ "$dropdb_confirm" = "yes" ]; then
+      if require_cmd psql; then
+        $SUDO -u postgres dropdb "${DB_NAME:-cloudnest}" >/dev/null 2>&1 || true
+        $SUDO -u postgres dropuser "${DB_USER:-cloudnest}" >/dev/null 2>&1 || true
+        ok "Dropped PostgreSQL database and user"
+      else
+        warn "psql not available; cannot drop database automatically"
+      fi
+    else
+      info "Skipping database drop"
+    fi
+  fi
+
+  ok "Uninstall finished"
+}
+
 main() {
   echo ""
   echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
@@ -564,21 +642,53 @@ main() {
     ensure_system_packages
   fi
 
-  ensure_system_packages
-  ensure_nodejs
-  ensure_pm2
-  ensure_postgres
-  ensure_redis
-  clone_or_update_repo
-  write_env_file
-  install_dependencies
-  setup_prisma
-  seed_admin_account
-  build_project
-  write_pm2_config
-  start_services
-  run_health_checks
-  print_summary
+  # If script is called with a direct command, run it non-interactively
+  case "${1:-}" in
+    install)
+      perform_install
+      exit $?
+      ;;
+    update)
+      perform_update
+      exit $?
+      ;;
+    uninstall)
+      perform_uninstall
+      exit $?
+      ;;
+  esac
+
+  # Interactive menu
+  while true; do
+    echo ""
+    echo "Select an option:"
+    echo "  1) install"
+    echo "  2) update"
+    echo "  3) uninstall"
+    echo "  4) exit"
+    read -rp $'Enter choice [1-4]: ' choice
+    case "$choice" in
+      1|install)
+        perform_install
+        break
+        ;;
+      2|update)
+        perform_update
+        break
+        ;;
+      3|uninstall)
+        perform_uninstall
+        break
+        ;;
+      4|exit)
+        echo "Exiting."
+        exit 0
+        ;;
+      *)
+        warn "Invalid selection"
+        ;;
+    esac
+  done
 }
 
 main "$@"
