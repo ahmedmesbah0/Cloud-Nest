@@ -1,8 +1,14 @@
+import { resolve } from 'node:path';
+import { config as loadEnv } from 'dotenv';
 import helmet from 'helmet';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+
+loadEnv({
+  path: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '.env.local')],
+});
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
