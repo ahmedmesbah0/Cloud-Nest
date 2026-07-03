@@ -31,6 +31,12 @@ prompt_input() {
   fi
 }
 
+ensure_tty_input() {
+  if [ ! -t 0 ] && [ -r /dev/tty ]; then
+    exec 0</dev/tty
+  fi
+}
+
 log_section() { echo -e "\n${CYAN}==> $*${NC}"; }
 
 run_with_retry() {
@@ -656,6 +662,8 @@ main() {
     err "curl is required"
     exit 1
   fi
+
+  ensure_tty_input
 
   if ! require_cmd python3; then
     ensure_system_packages
