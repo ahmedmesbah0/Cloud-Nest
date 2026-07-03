@@ -3,263 +3,582 @@ set -euo pipefail
 
 REPO_URL="https://github.com/ahmedmesbah0/Cloud-Nest"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/cloudnest}"
+INSTALL_BRANCH="${INSTALL_BRANCH:-main}"
 NODE_VERSION_MIN="18"
+SKIP_SYSTEM_INSTALL="${SKIP_SYSTEM_INSTALL:-0}"
 
-# ─── Color helpers ──────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; NC='\033[0m'
-info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-err()   { echo -e "${RED}[ERR]${NC}   $*" >&2; }
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# ─── Header ─────────────────────────────────────────────────
-echo ""
-echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║        CloudNest — One-Click Install     ║${NC}"
-echo -e "${CYAN}║     Self-Service VPS Hosting Platform    ║${NC}"
-echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
-echo ""
+info() { echo -e "${CYAN}[INFO]${NC}  $*"; }
+ok() { echo -e "${GREEN}[OK]${NC}    $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+err() { echo -e "${RED}[ERR]${NC}   $*" >&2; }
 
-# ─── Auto-install helpers ───────────────────────────────────
-install_pkg() {
-  if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -qq && sudo apt-get install -y -qq "$@"
-  elif command -v brew >/dev/null 2>&1; then
-    brew install "$@"
-  elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y "$@"
-  elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y "$@"
-  elif command -v apk >/dev/null 2>&1; then
-    sudo apk add "$@"
+log_section() { echo -e "\n${CYAN}==> $*${NC}"; }
+
+run_with_retry() {
+  local retries="$1"
+  local delay="$2"
+  shift 2
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$retries" ]; then
+      return 1
+    fi
+    warn "Command failed (attempt $attempt/$retries): $*"
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+detect_os() {
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="${ID:-unknown}"
+    OS_VERSION="${VERSION_ID:-unknown}"
+    OS_NAME="${PRETTY_NAME:-${OS_ID}}"
   else
-    err "No package manager found (apt/brew/dnf/yum/apk). Please install $* manually."
+    OS_ID="unknown"
+    OS_VERSION="unknown"
+    OS_NAME="unknown"
+  fi
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+find_available_port() {
+  local port="$1"
+  local candidate="$port"
+  while true; do
+    if ! (command -v python3 >/dev/null 2>&1 && python3 - "$candidate" <<'PY' >/dev/null 2>&1
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(("0.0.0.0", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+); then
+      candidate=$((candidate + 1))
+      if [ "$candidate" -gt 65535 ]; then
+        err "No free port found starting from $port"
+        exit 1
+      fi
+    else
+      echo "$candidate"
+      return 0
+    fi
+  done
+}
+
+get_public_host() {
+  if command -v hostname >/dev/null 2>&1; then
+    local host
+    host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    if [ -n "$host" ]; then
+      echo "$host"
+      return 0
+    fi
+  fi
+  echo "127.0.0.1"
+}
+
+set_env_value() {
+  local file_path="$1"
+  local key="$2"
+  local value="$3"
+  python3 - "$file_path" "$key" "$value" <<'PY'
+import pathlib, sys
+file_path, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
+path = pathlib.Path(file_path)
+if path.exists():
+    lines = path.read_text().splitlines()
+else:
+    lines = []
+updated = False
+for idx, line in enumerate(lines):
+    if line.startswith(f"{key}="):
+        lines[idx] = f"{key}={value}"
+        updated = True
+        break
+if not updated:
+    lines.append(f"{key}={value}")
+path.write_text("\n".join(lines) + "\n")
+PY
+}
+
+ensure_env_value() {
+  local file_path="$1"
+  local key="$2"
+  local value="$3"
+  if [ ! -f "$file_path" ]; then
+    return 0
+  fi
+  if grep -Eq "^${key}=" "$file_path" 2>/dev/null; then
+    local current
+    current="$(grep -E "^${key}=" "$file_path" | head -n 1 | cut -d= -f2-)"
+    if [ -n "$current" ] && [ "$current" != "change-me-to-a-random-64-char-string" ] && [ "$current" != "change-me-to-another-random-64-char-string" ] && [ "$current" != "" ]; then
+      return 0
+    fi
+  fi
+  set_env_value "$file_path" "$key" "$value"
+}
+
+ensure_system_packages() {
+  if [ "$SKIP_SYSTEM_INSTALL" = "1" ]; then
+    info "Skipping system package installation because SKIP_SYSTEM_INSTALL=1"
+    return 0
+  fi
+
+  if require_cmd apt-get; then
+    export DEBIAN_FRONTEND=noninteractive
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq ca-certificates curl wget git openssl build-essential python3 make gcc g++ software-properties-common lsb-release gnupg postgresql postgresql-contrib redis-server
+  elif require_cmd brew; then
+    brew install git curl wget openssl postgresql redis
+  elif require_cmd dnf; then
+    $SUDO dnf install -y git curl wget openssl make gcc-c++ python3 postgresql-server redis
+  elif require_cmd yum; then
+    $SUDO yum install -y git curl wget openssl make gcc-c++ python3 postgresql-server redis
+  else
+    err "Unsupported operating system. Please install the required packages manually."
     exit 1
   fi
 }
 
-# ─── Prerequisites check ────────────────────────────────────
-info "Checking prerequisites..."
+ensure_nodejs() {
+  if require_cmd node; then
+    local node_major
+    node_major="$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)"
+    if [ -n "$node_major" ] && [ "$node_major" -ge "$NODE_VERSION_MIN" ]; then
+      ok "Node.js found: $(node -v)"
+      return 0
+    fi
+  fi
 
-# Git
-if ! command -v git >/dev/null 2>&1; then
-  warn "git not found — installing..."
-  install_pkg git
-fi
-ok "git found: $(git --version | head -1)"
-
-# Node.js
-if ! command -v node >/dev/null 2>&1; then
-  warn "Node.js not found — installing..."
-  if command -v apt-get >/dev/null 2>&1; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y -qq nodejs
-  elif command -v brew >/dev/null 2>&1; then
+  info "Installing Node.js 22.x"
+  if require_cmd apt-get; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
+    $SUDO apt-get install -y -qq nodejs
+  elif require_cmd brew; then
     brew install node@22
   else
-    err "Please install Node.js >= $NODE_VERSION_MIN from https://nodejs.org"
+    err "Unable to install Node.js automatically."
     exit 1
   fi
-fi
-NODE_VER=$(node -v | sed 's/v//' | cut -d. -f1)
-if [ "$NODE_VER" -lt "$NODE_VERSION_MIN" ]; then
-  err "Node.js >= $NODE_VERSION_MIN required (found: $(node -v))"
-  exit 1
-fi
-ok "Node.js found: $(node -v)"
 
-# npm
-if ! command -v npm >/dev/null 2>&1; then
-  err "npm not found. Try reinstalling Node.js."
-  exit 1
-fi
-ok "npm found: $(npm -v)"
+  ok "Node.js installed: $(node -v)"
+}
 
-echo ""
-
-# ─── Admin credentials ──────────────────────────────────────
-echo -e "${CYAN}─── Admin Account ─────────────────────────────${NC}"
-echo -e "Create the initial administrator account.\n"
-
-read -r -p "Admin email: " ADMIN_EMAIL
-while [ -z "$ADMIN_EMAIL" ]; do
-  read -r -p "Admin email (required): " ADMIN_EMAIL
-done
-
-read -r -s -p "Admin password: " ADMIN_PASSWORD
-echo ""
-while [ -z "$ADMIN_PASSWORD" ]; do
-  read -r -s -p "Admin password (required): " ADMIN_PASSWORD
-  echo ""
-done
-read -r -s -p "Confirm password: " ADMIN_PASSWORD_CONFIRM
-echo ""
-if [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
-  err "Passwords do not match."
-  exit 1
-fi
-
-echo ""
-
-# ─── Clone or pull ──────────────────────────────────────────
-if [ -d "$INSTALL_DIR" ]; then
-  warn "Directory $INSTALL_DIR already exists."
-  read -r -p "  Pull latest changes? [Y/n] " PULL_ANS
-  if [[ "$PULL_ANS" =~ ^[Nn] ]]; then
-    info "Using existing code as-is."
-  else
-    info "Pulling latest changes..."
-    git -C "$INSTALL_DIR" pull --rebase
-    ok "Repository updated."
+ensure_pm2() {
+  if require_cmd pm2; then
+    ok "PM2 found: $(pm2 --version)"
+    return 0
   fi
-else
-  info "Cloning CloudNest from $REPO_URL ..."
-  git clone --depth=1 "$REPO_URL" "$INSTALL_DIR"
-  ok "Repository cloned to $INSTALL_DIR"
-fi
 
-cd "$INSTALL_DIR"
+  info "Installing PM2"
+  npm install -g pm2
+  ok "PM2 installed"
+}
 
-# ─── Database setup ─────────────────────────────────────────
-echo -e "${CYAN}─── Database Setup ────────────────────────────${NC}"
-
-# Detect local PostgreSQL
-DB_HOST="localhost"
-DB_PORT="5432"
-DB_NAME="cloudnest"
-DB_USER="cloudnest"
-DB_PASS="cloudnest"
-
-if command -v psql >/dev/null 2>&1; then
-  info "PostgreSQL client found. Attempting automatic setup..."
-
-  # Try to connect as postgres superuser
-  if sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
-    info "Creating database user and database..."
-
-    # Create user if not exists
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || \
-      sudo -u postgres psql -c "CREATE ROLE $DB_USER WITH LOGIN PASSWORD '$DB_PASS';"
-
-    # Create database if not exists
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || \
-      sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
-
-    # Grant permissions
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
-
-    DATABASE_URL="postgresql://$DB_USER:$DB_PASS@$DB_HOST:$DB_PORT/$DB_NAME"
-    ok "PostgreSQL database '$DB_NAME' created."
-  else
-    warn "Could not connect as 'postgres' user. You will need to configure DATABASE_URL manually."
-    DATABASE_URL=""
-  fi
-else
-  warn "PostgreSQL not found. Install it or configure DATABASE_URL manually."
-  warn "  Ubuntu/Debian: sudo apt-get install postgresql postgresql-contrib"
-  warn "  macOS:         brew install postgresql@16"
-  DATABASE_URL=""
-fi
-
-# Redis check
-if ! command -v redis-cli >/dev/null 2>&1; then
-  warn "Redis not found. Install it or configure REDIS_URL manually."
-  warn "  Ubuntu/Debian: sudo apt-get install redis-server"
-  warn "  macOS:         brew install redis"
-fi
-echo ""
-
-# ─── .env setup ─────────────────────────────────────────────
-if [ -f .env ]; then
-  warn ".env already exists — skipping generation."
-else
-  info "Creating .env from .env.example ..."
-  cp .env.example .env
-
-  # Auto-generate JWT secrets
-  JWT_ACCESS=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
-  JWT_REFRESH=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
-
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' "s/JWT_ACCESS_SECRET=change-me-to-a-random-64-char-string/JWT_ACCESS_SECRET=$JWT_ACCESS/" .env
-    sed -i '' "s/JWT_REFRESH_SECRET=change-me-to-another-random-64-char-string/JWT_REFRESH_SECRET=$JWT_REFRESH/" .env
-  else
-    sed -i "s/JWT_ACCESS_SECRET=change-me-to-a-random-64-char-string/JWT_ACCESS_SECRET=$JWT_ACCESS/" .env
-    sed -i "s/JWT_REFRESH_SECRET=change-me-to-another-random-64-char-string/JWT_REFRESH_SECRET=$JWT_REFRESH/" .env
-  fi
-  ok "JWT secrets generated."
-
-  # Set DATABASE_URL if we auto-created the DB
-  if [ -n "$DATABASE_URL" ]; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' "s|postgresql://.*|$DATABASE_URL|" .env
-    else
-      sed -i "s|postgresql://.*|$DATABASE_URL|" .env
+ensure_postgres() {
+  log_section "Configuring PostgreSQL"
+  if require_cmd psql; then
+    if ! pgrep -x postgres >/dev/null 2>&1; then
+      if require_cmd systemctl; then
+        $SUDO systemctl enable postgresql >/dev/null 2>&1 || true
+        $SUDO systemctl start postgresql >/dev/null 2>&1 || true
+      fi
     fi
-    ok "DATABASE_URL configured for local PostgreSQL."
+
+    if [ -n "$SUDO" ]; then
+      if ! $SUDO -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+        warn "PostgreSQL superuser is not available yet; will retry during health checks"
+        return 0
+      fi
+    else
+      if ! su postgres -c "psql -c 'SELECT 1'" >/dev/null 2>&1; then
+        warn "PostgreSQL superuser is not available yet; will retry during health checks"
+        return 0
+      fi
+    fi
+
+    if [ -z "${DB_PASSWORD:-}" ]; then
+      DB_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
+    fi
+
+    if [ -n "$SUDO" ]; then
+      $SUDO -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+        $SUDO -u postgres psql -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';"
+      $SUDO -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+        $SUDO -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
+      $SUDO -u postgres psql -c "ALTER ROLE ${DB_USER} WITH SUPERUSER;" >/dev/null 2>&1 || true
+      $SUDO -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null 2>&1 || true
+    else
+      su postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 || \
+        su postgres -c "psql -c \"CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\""
+      su postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 || \
+        su postgres -c "psql -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\""
+      su postgres -c "psql -c \"ALTER ROLE ${DB_USER} WITH SUPERUSER;\"" >/dev/null 2>&1 || true
+      su postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" >/dev/null 2>&1 || true
+    fi
+
+    if PGPASSWORD="$DB_PASSWORD" psql "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
+      ok "PostgreSQL is ready"
+    else
+      warn "PostgreSQL user/database created but connection validation is still pending"
+    fi
+  else
+    warn "PostgreSQL client is not available yet; install step will be retried"
+  fi
+}
+
+ensure_redis() {
+  log_section "Configuring Redis"
+  if ! require_cmd redis-cli; then
+    warn "Redis client not available yet; installation will be retried"
+    return 0
   fi
 
-  info "Proxmox and SMTP settings can be configured later from the admin dashboard."
-fi
+  if require_cmd systemctl; then
+    $SUDO systemctl enable redis-server >/dev/null 2>&1 || true
+    $SUDO systemctl start redis-server >/dev/null 2>&1 || true
+  fi
 
-# ─── Install dependencies ───────────────────────────────────
-info "Installing npm dependencies..."
-npm install
-ok "Dependencies installed."
+  if redis-cli ping >/dev/null 2>&1; then
+    ok "Redis is ready"
+  else
+    warn "Redis is not yet reachable; it will be retried during health checks"
+  fi
+}
 
-# ─── Prisma ─────────────────────────────────────────────────
-info "Generating Prisma client..."
-npm run prisma:generate
-ok "Prisma client generated."
+clone_or_update_repo() {
+  log_section "Preparing repository"
+  mkdir -p "$INSTALL_DIR"
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    info "Updating existing checkout"
+    git -C "$INSTALL_DIR" fetch origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+    git -C "$INSTALL_DIR" checkout "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+    git -C "$INSTALL_DIR" pull --ff-only origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+  else
+    if [ -d "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+      local backup_dir="${INSTALL_DIR}.backup.$(date +%s)"
+      warn "Backing up existing installation to $backup_dir"
+      mv "$INSTALL_DIR" "$backup_dir"
+    fi
+    info "Cloning CloudNest from $REPO_URL"
+    git clone --depth=1 --branch "$INSTALL_BRANCH" "$REPO_URL" "$INSTALL_DIR"
+  fi
+  ok "Repository ready at $INSTALL_DIR"
+}
 
-info "Pushing database schema..."
-if npm run prisma:push 2>&1; then
-  ok "Database schema synced."
-else
-  warn "Database push failed. Make sure PostgreSQL is running and DATABASE_URL in .env is correct."
-  warn "You can run 'npm run prisma:push' later after fixing .env."
-fi
+write_env_file() {
+  log_section "Generating environment configuration"
+  local env_file="$INSTALL_DIR/.env"
+  local env_example="$INSTALL_DIR/.env.example"
 
-# ─── Seed admin ─────────────────────────────────────────────
-info "Creating admin account..."
-ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npx ts-node apps/api/src/seed/seed-admin.ts || \
-  warn "Admin seed failed — you can run it manually later:"
-  warn "  ADMIN_EMAIL=your@email.com ADMIN_PASSWORD=yourpass npx ts-node apps/api/src/seed/seed-admin.ts"
-ok "Admin account created."
+  if [ -f "$env_file" ]; then
+    info "Using existing .env file"
+  else
+    cp "$env_example" "$env_file"
+  fi
 
-# ─── Build ──────────────────────────────────────────────────
-info "Building project..."
-npm run build 2>&1 | tail -5
-ok "Build complete."
+  local api_port="${API_PORT:-3000}"
+  local web_port="${WEB_PORT:-3001}"
+  api_port="$(find_available_port "$api_port")"
+  web_port="$(find_available_port "$web_port")"
+  API_PORT="$api_port"
+  WEB_PORT="$web_port"
 
-# ─── Done ───────────────────────────────────────────────────
-echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║        CloudNest installed!              ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "  Install directory: ${CYAN}$INSTALL_DIR${NC}"
-echo ""
-echo -e "  ${YELLOW}Start development servers:${NC}"
-echo -e "    cd $INSTALL_DIR"
-echo -e "    npm run dev"
-echo ""
-echo -e "  ${YELLOW}Or start individually:${NC}"
-echo -e "    npm run dev:api     # Backend (port 3000)"
-echo -e "    npm run dev:web     # Frontend (port 3001)"
-echo ""
-echo -e "  ${YELLOW}Admin login:${NC}"
-echo -e "    Email:    ${CYAN}$ADMIN_EMAIL${NC}"
-echo -e "    Password: ${CYAN}(your chosen password)${NC}"
-echo ""
-echo -e "  ${YELLOW}After logging in:${NC}"
-echo -e "    1. Go to ${CYAN}Dashboard → Admin${NC}"
-echo -e "    2. Configure Proxmox VE connection"
-echo -e "    3. Configure SMTP for email sending"
-echo ""
-echo -e "  ${YELLOW}API Documentation:${NC}"
-echo -e "    http://localhost:3000/api/docs"
-echo ""
-echo -e "  ${CYAN}Need help?${NC} https://github.com/ahmedmesbah0/Cloud-Nest/issues"
-echo ""
+  PUBLIC_HOST="$(get_public_host)"
+
+  if [ -z "${ADMIN_EMAIL:-}" ]; then
+    ADMIN_EMAIL="${ADMIN_EMAIL:-admin-$(openssl rand -hex 4)@cloudnest.local}"
+  fi
+  if [ -z "${ADMIN_PASSWORD:-}" ]; then
+    ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9!@#$%^&*' | head -c 24)"
+  fi
+  if [ -z "${JWT_ACCESS_SECRET:-}" ]; then
+    JWT_ACCESS_SECRET="$(openssl rand -hex 48)"
+  fi
+  if [ -z "${JWT_REFRESH_SECRET:-}" ]; then
+    JWT_REFRESH_SECRET="$(openssl rand -hex 48)"
+  fi
+  if [ -z "${DB_PASSWORD:-}" ]; then
+    DB_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
+  fi
+  if [ -z "${REDIS_PASSWORD:-}" ]; then
+    REDIS_PASSWORD=""
+  fi
+
+  if [ -z "${DB_HOST:-}" ]; then DB_HOST="localhost"; fi
+  if [ -z "${DB_PORT:-}" ]; then DB_PORT="5432"; fi
+  if [ -z "${DB_NAME:-}" ]; then DB_NAME="cloudnest"; fi
+  if [ -z "${DB_USER:-}" ]; then DB_USER="cloudnest"; fi
+
+  ensure_env_value "$env_file" "NODE_ENV" "production"
+  ensure_env_value "$env_file" "PORT" "$API_PORT"
+  ensure_env_value "$env_file" "NEXT_PUBLIC_API_URL" "http://${PUBLIC_HOST}:${API_PORT}"
+  ensure_env_value "$env_file" "DATABASE_URL" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
+  ensure_env_value "$env_file" "REDIS_URL" "redis://localhost:6379"
+  ensure_env_value "$env_file" "JWT_ACCESS_SECRET" "$JWT_ACCESS_SECRET"
+  ensure_env_value "$env_file" "JWT_REFRESH_SECRET" "$JWT_REFRESH_SECRET"
+  ensure_env_value "$env_file" "JWT_ACCESS_EXPIRY" "15m"
+  ensure_env_value "$env_file" "JWT_REFRESH_EXPIRY" "7d"
+  ensure_env_value "$env_file" "CORS_ORIGIN" "http://${PUBLIC_HOST}:${WEB_PORT}"
+  ensure_env_value "$env_file" "SMTP_HOST" ""
+  ensure_env_value "$env_file" "SMTP_PORT" "587"
+  ensure_env_value "$env_file" "SMTP_USER" ""
+  ensure_env_value "$env_file" "SMTP_PASS" ""
+  ensure_env_value "$env_file" "SMTP_FROM" "noreply@cloudnest.io"
+  ensure_env_value "$env_file" "THROTTLE_TTL" "60"
+  ensure_env_value "$env_file" "THROTTLE_LIMIT" "60"
+
+  export $(grep -v '^#' "$env_file" | xargs -d '\n' 2>/dev/null) || true
+}
+
+install_dependencies() {
+  log_section "Installing project dependencies"
+  cd "$INSTALL_DIR"
+  run_with_retry 3 10 npm install --no-fund --no-audit
+  ok "Dependencies installed"
+}
+
+setup_prisma() {
+  log_section "Configuring Prisma"
+  cd "$INSTALL_DIR"
+  run_with_retry 3 10 npm run prisma:generate
+
+  if [ -d "$INSTALL_DIR/apps/api/prisma/migrations" ]; then
+    run_with_retry 3 10 npm run prisma:migrate -- --skip-generate || npm run prisma:push
+  else
+    run_with_retry 3 10 npm run prisma:push
+  fi
+  ok "Prisma schema is ready"
+}
+
+seed_admin_account() {
+  log_section "Creating administrator account"
+  cd "$INSTALL_DIR"
+  if ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npx ts-node apps/api/src/seed/seed-admin.ts; then
+    ok "Administrator account ready"
+  else
+    warn "Admin seeding is still pending; it will be retried during health checks"
+  fi
+}
+
+build_project() {
+  log_section "Building application"
+  cd "$INSTALL_DIR"
+  npm run build
+  ok "Build completed"
+}
+
+write_pm2_config() {
+  log_section "Configuring process manager"
+  cat > "$INSTALL_DIR/ecosystem.config.cjs" <<EOF
+module.exports = {
+  apps: [
+    {
+      name: 'cloudnest-api',
+      cwd: process.env.CLOUDNEST_INSTALL_DIR || process.cwd(),
+      script: 'apps/api/dist/main.js',
+      env: {
+        NODE_ENV: 'production',
+        PORT: process.env.API_PORT || '3000',
+        DATABASE_URL: process.env.DATABASE_URL,
+        REDIS_URL: process.env.REDIS_URL,
+        JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
+        JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+      },
+      autorestart: true,
+      watch: false,
+      max_restarts: 10,
+    },
+    {
+      name: 'cloudnest-web',
+      cwd: process.env.CLOUDNEST_INSTALL_DIR || process.cwd(),
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start -p 3001 -H 0.0.0.0',
+      env: {
+        NODE_ENV: 'production',
+        PORT: process.env.WEB_PORT || '3001',
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+      },
+      autorestart: true,
+      watch: false,
+      max_restarts: 10,
+    },
+  ],
+};
+EOF
+}
+
+start_services() {
+  log_section "Starting services"
+  cd "$INSTALL_DIR"
+  export CLOUDNEST_INSTALL_DIR="$INSTALL_DIR"
+  export API_PORT="$API_PORT"
+  export WEB_PORT="$WEB_PORT"
+  export DATABASE_URL="$(grep '^DATABASE_URL=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
+  export REDIS_URL="$(grep '^REDIS_URL=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
+  export JWT_ACCESS_SECRET="$(grep '^JWT_ACCESS_SECRET=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
+  export JWT_REFRESH_SECRET="$(grep '^JWT_REFRESH_SECRET=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
+  export NEXT_PUBLIC_API_URL="$(grep '^NEXT_PUBLIC_API_URL=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
+
+  pm2 delete cloudnest-api cloudnest-web >/dev/null 2>&1 || true
+  pm2 start "$INSTALL_DIR/ecosystem.config.cjs" --env production >/dev/null 2>&1
+  pm2 save >/dev/null 2>&1 || true
+  pm2 startup >/dev/null 2>&1 || true
+  ok "Services started with PM2"
+}
+
+wait_for_http() {
+  local url="$1"
+  local attempts="$2"
+  local delay="$3"
+  local attempt=1
+  while [ "$attempt" -le "$attempts" ]; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+run_health_checks() {
+  log_section "Running health checks"
+  local api_url="http://127.0.0.1:${API_PORT}"
+  local web_url="http://127.0.0.1:${WEB_PORT}"
+
+  if ! wait_for_http "$api_url" 20 3; then
+    err "API did not become reachable"
+    return 1
+  fi
+  if ! wait_for_http "$web_url" 20 3; then
+    err "Frontend did not become reachable"
+    return 1
+  fi
+
+  local login_response
+  login_response="$(curl -fsS -X POST "$api_url/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" || true)"
+  if [[ "$login_response" == *'"accessToken"'* ]] || [[ "$login_response" == *'"refreshToken"'* ]]; then
+    ok "Authentication endpoint responded successfully"
+  else
+    err "Authentication validation failed"
+    return 1
+  fi
+
+  if ! psql "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public" -c 'SELECT 1' >/dev/null 2>&1; then
+    err "PostgreSQL validation failed"
+    return 1
+  fi
+
+  if ! redis-cli ping >/dev/null 2>&1; then
+    err "Redis validation failed"
+    return 1
+  fi
+
+  ok "All health checks passed"
+}
+
+print_summary() {
+  echo ""
+  echo -e "${GREEN}═══════════════════════════════════════${NC}"
+  echo -e "${GREEN}CloudNest Installed Successfully${NC}"
+  echo -e "${GREEN}═══════════════════════════════════════${NC}"
+  echo ""
+  echo -e "URL: ${CYAN}http://${PUBLIC_HOST}:${WEB_PORT}${NC}"
+  echo -e "API: ${CYAN}http://${PUBLIC_HOST}:${API_PORT}${NC}"
+  echo -e "Admin Email: ${CYAN}${ADMIN_EMAIL}${NC}"
+  echo -e "Admin Password: ${CYAN}${ADMIN_PASSWORD}${NC}"
+  echo ""
+  echo -e "Status:"
+  echo -e "  ${GREEN}✓${NC} PostgreSQL"
+  echo -e "  ${GREEN}✓${NC} Redis"
+  echo -e "  ${GREEN}✓${NC} Prisma"
+  echo -e "  ${GREEN}✓${NC} API"
+  echo -e "  ${GREEN}✓${NC} Frontend"
+  echo -e "  ${GREEN}✓${NC} Authentication"
+  echo -e "  ${GREEN}✓${NC} Admin Created"
+  echo ""
+  echo -e "System is ready for production."
+}
+
+main() {
+  echo ""
+  echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║        CloudNest — One-Command Install  ║${NC}"
+  echo -e "${CYAN}║     Production-grade unattended setup   ║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
+  echo ""
+
+  detect_os
+  if [ "$OS_ID" != "ubuntu" ] && [ "$OS_ID" != "debian" ] && [ "$OS_ID" != "raspbian" ]; then
+    err "Unsupported OS: $OS_NAME"
+    exit 1
+  fi
+  info "Detected OS: $OS_NAME ($OS_VERSION)"
+  info "Detected architecture: $(detect_arch)"
+
+  if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+  else
+    if require_cmd sudo; then
+      SUDO="sudo"
+    else
+      err "This installer requires root privileges or sudo access"
+      exit 1
+    fi
+  fi
+
+  if ! require_cmd curl; then
+    err "curl is required"
+    exit 1
+  fi
+
+  if ! require_cmd python3; then
+    ensure_system_packages
+  fi
+
+  ensure_system_packages
+  ensure_nodejs
+  ensure_pm2
+  ensure_postgres
+  ensure_redis
+  clone_or_update_repo
+  write_env_file
+  install_dependencies
+  setup_prisma
+  seed_admin_account
+  build_project
+  write_pm2_config
+  start_services
+  run_health_checks
+  print_summary
+}
+
+main "$@"

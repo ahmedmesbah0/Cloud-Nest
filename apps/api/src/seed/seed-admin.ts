@@ -1,19 +1,34 @@
 import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
+
 const prisma = new PrismaClient();
 
+function getAdminCredentials() {
+  const emailArg = process.argv[2] || process.env.ADMIN_EMAIL;
+  const passwordArg = process.argv[3] || process.env.ADMIN_PASSWORD;
+
+  if (!emailArg) {
+    throw new Error('ADMIN_EMAIL is required');
+  }
+  if (!passwordArg) {
+    throw new Error('ADMIN_PASSWORD is required');
+  }
+
+  return { email: emailArg, password: passwordArg };
+}
+
 export async function seedAdmin(emailArg?: string, passwordArg?: string) {
-  const email = emailArg || process.env.ADMIN_EMAIL || 'admin@cloudnest.io';
-  const password = passwordArg || process.env.ADMIN_PASSWORD || 'AdminP4ss!';
+  const { email, password } = { email: emailArg, password: passwordArg };
+  const resolvedEmail = email || process.env.ADMIN_EMAIL || 'admin@cloudnest.io';
+  const resolvedPassword = password || process.env.ADMIN_PASSWORD || 'AdminP4ss!';
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-
+  const existing = await prisma.user.findUnique({ where: { email: resolvedEmail } });
   if (existing) {
-    console.log('Admin user already exists');
+    console.log(`Admin user already exists: ${resolvedEmail}`);
     return;
   }
 
-  const passwordHash = await argon2.hash(password);
+  const passwordHash = await argon2.hash(resolvedPassword);
 
   const adminRole = await prisma.role.upsert({
     where: { name: 'admin' },
@@ -56,7 +71,7 @@ export async function seedAdmin(emailArg?: string, passwordArg?: string) {
 
   const user = await prisma.user.create({
     data: {
-      email,
+      email: resolvedEmail,
       passwordHash,
       name: 'Admin',
       emailVerified: true,
@@ -71,14 +86,17 @@ export async function seedAdmin(emailArg?: string, passwordArg?: string) {
     data: { userId: user.id, roleId: customerRole.id },
   });
 
-  console.log(`Admin user created: ${email} / ${password}`);
+  console.log(`Admin user created: ${resolvedEmail}`);
 }
 
-const emailArg = process.argv[2] || process.env.ADMIN_EMAIL;
-const passwordArg = process.argv[3] || process.env.ADMIN_PASSWORD;
-seedAdmin(emailArg, passwordArg)
-  .catch((e) => {
-    console.error('Admin seed failed:', e);
+async function main() {
+  const credentials = getAdminCredentials();
+  await seedAdmin(credentials.email, credentials.password);
+}
+
+main()
+  .catch((error) => {
+    console.error('Admin seed failed:', error);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
