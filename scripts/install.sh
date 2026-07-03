@@ -21,13 +21,47 @@ echo -e "${CYAN}║     Self-Service VPS Hosting Platform    ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
+# ─── Auto-install helpers ───────────────────────────────────
+install_pkg() {
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -qq && sudo apt-get install -y -qq "$@"
+  elif command -v brew >/dev/null 2>&1; then
+    brew install "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y "$@"
+  elif command -v apk >/dev/null 2>&1; then
+    sudo apk add "$@"
+  else
+    err "No package manager found (apt/brew/dnf/yum/apk). Please install $* manually."
+    exit 1
+  fi
+}
+
 # ─── Prerequisites check ────────────────────────────────────
 info "Checking prerequisites..."
 
-command -v git  >/dev/null 2>&1 || { err "git is required but not installed."; exit 1; }
+# Git
+if ! command -v git >/dev/null 2>&1; then
+  warn "git not found — installing..."
+  install_pkg git
+fi
 ok "git found: $(git --version | head -1)"
 
-command -v node >/dev/null 2>&1 || { err "Node.js is required but not installed."; exit 1; }
+# Node.js
+if ! command -v node >/dev/null 2>&1; then
+  warn "Node.js not found — installing..."
+  if command -v apt-get >/dev/null 2>&1; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt-get install -y -qq nodejs
+  elif command -v brew >/dev/null 2>&1; then
+    brew install node@22
+  else
+    err "Please install Node.js >= $NODE_VERSION_MIN from https://nodejs.org"
+    exit 1
+  fi
+fi
 NODE_VER=$(node -v | sed 's/v//' | cut -d. -f1)
 if [ "$NODE_VER" -lt "$NODE_VERSION_MIN" ]; then
   err "Node.js >= $NODE_VERSION_MIN required (found: $(node -v))"
@@ -35,13 +69,28 @@ if [ "$NODE_VER" -lt "$NODE_VERSION_MIN" ]; then
 fi
 ok "Node.js found: $(node -v)"
 
-command -v npm >/dev/null 2>&1 || { err "npm is required but not installed."; exit 1; }
+# npm comes with Node.js, but check anyway
+if ! command -v npm >/dev/null 2>&1; then
+  err "npm not found. Try reinstalling Node.js."
+  exit 1
+fi
 ok "npm found: $(npm -v)"
 
 # Optional services check
 HAS_PSQL=false; HAS_REDIS=false
 command -v psql    >/dev/null 2>&1 && HAS_PSQL=true
 command -v redis-cli >/dev/null 2>&1 && HAS_REDIS=true
+
+if ! $HAS_PSQL; then
+  warn "PostgreSQL (psql) not found — install it or use a remote DATABASE_URL in .env"
+  warn "  Ubuntu/Debian: sudo apt-get install postgresql postgresql-contrib"
+  warn "  macOS:         brew install postgresql@16"
+fi
+if ! $HAS_REDIS; then
+  warn "Redis (redis-cli) not found — install it or use a remote REDIS_URL in .env"
+  warn "  Ubuntu/Debian: sudo apt-get install redis-server"
+  warn "  macOS:         brew install redis"
+fi
 
 echo ""
 
