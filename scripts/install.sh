@@ -203,6 +203,12 @@ ensure_pm2() {
 
 ensure_postgres() {
   log_section "Configuring PostgreSQL"
+  # provide safe defaults so set -u doesn't fail when variables are not set
+  : "${DB_USER:=cloudnest}"
+  : "${DB_NAME:=cloudnest}"
+  : "${DB_HOST:=localhost}"
+  : "${DB_PORT:=5432}"
+
   if require_cmd psql; then
     if ! pgrep -x postgres >/dev/null 2>&1; then
       if require_cmd systemctl; then
