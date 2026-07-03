@@ -1,5 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import path from 'node:path';
+import { loadAppEnv } from './load-env';
 
+loadAppEnv(path.resolve(process.cwd(), '.env'));
+
+const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function seedNode() {

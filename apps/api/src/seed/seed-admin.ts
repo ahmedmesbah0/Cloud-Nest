@@ -1,7 +1,13 @@
-import { PrismaClient } from '@prisma/client';
+import path from 'node:path';
 import * as argon2 from 'argon2';
+import { loadAppEnv } from './load-env';
 
-const prisma = new PrismaClient();
+loadAppEnv(path.resolve(process.cwd(), '.env'));
+
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient({
+  errorFormat: 'pretty',
+});
 
 function getAdminCredentials() {
   const emailArg = process.argv[2] || process.env.ADMIN_EMAIL;
