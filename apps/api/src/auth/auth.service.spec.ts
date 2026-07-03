@@ -24,9 +24,11 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 
 describe('AuthService', () => {
   let service: AuthService;
+  const mockMailService = { send: jest.fn() };
 
   // In-memory store simulates real DB state across calls
   const store = {
@@ -129,6 +131,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: MailService, useValue: mockMailService },
       ],
     }).compile();
 
@@ -141,9 +144,7 @@ describe('AuthService', () => {
   // ─── Registration ───────────────────────────────────────────
 
   describe('register', () => {
-    it('creates a user, returns id/email/name, and logs a verification link', async () => {
-      const log = jest.spyOn(console, 'log').mockImplementation();
-
+    it('creates a user, returns id/email/name, and sends verification email', async () => {
       const result = await service.register({
         email: 'alice@test.com',
         password: 'StrongP4ss!',
@@ -155,9 +156,6 @@ describe('AuthService', () => {
         email: 'alice@test.com',
         name: 'Alice',
       });
-      expect(log).toHaveBeenCalledWith(
-        expect.stringContaining('/auth/verify-email?token='),
-      );
 
       // User persisted in store
       expect(store.users.size).toBe(1);
@@ -166,8 +164,6 @@ describe('AuthService', () => {
       expect(saved.passwordHash).not.toBe('StrongP4ss!'); // hashed
       expect(saved.emailVerifyToken).toBeTruthy();
       expect(saved.emailVerified).toBe(false);
-
-      log.mockRestore();
     });
 
     it('rejects duplicate email with ConflictException', async () => {
@@ -445,9 +441,7 @@ describe('AuthService', () => {
   // ─── Password reset ─────────────────────────────────────────
 
   describe('forgotPassword', () => {
-    it('logs a reset link and returns generic message for existing user', async () => {
-      const log = jest.spyOn(console, 'log').mockImplementation();
-
+    it('sends a reset link and returns generic message for existing user', async () => {
       const { id } = await service.register({
         email: 'ivan@test.com',
         password: 'StrongP4ss!',
@@ -459,11 +453,6 @@ describe('AuthService', () => {
       expect(result).toEqual({
         message: 'If that email exists, a reset link has been sent',
       });
-      expect(log).toHaveBeenCalledWith(
-        expect.stringContaining('/auth/reset-password?token='),
-      );
-
-      log.mockRestore();
     });
 
     it('returns same generic message for non-existent email (no info leak)', async () => {
@@ -489,12 +478,11 @@ describe('AuthService', () => {
       await service.login({ email: 'judy@test.com', password: 'StrongP4ss!' });
       expect(store.sessions.size).toBe(1);
 
-      // Spy on console.log to capture the raw reset token
-      const logSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Capture the raw reset token from the mail service mock
       await service.forgotPassword({ email: 'judy@test.com' });
-      const logCall = logSpy.mock.calls[0][0] as string;
-      const rawToken = logCall.split('?token=')[1];
-      logSpy.mockRestore();
+      const sentCalls = mockMailService.send.mock.calls;
+      const sentCall = sentCalls[sentCalls.length - 1][0];
+      const rawToken = sentCall.text.split('?token=')[1];
 
       const result = await service.resetPassword({
         token: rawToken,

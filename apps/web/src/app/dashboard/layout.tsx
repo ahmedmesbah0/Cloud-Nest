@@ -83,15 +83,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             );
           })}
           {isAdmin && (
-            <Link
-              href="http://localhost:3000/api/docs"
-              target="_blank"
-              onClick={() => setSidebarOpen(false)}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
-            >
-              <Shield className="h-4 w-4" />
-              Admin API
-            </Link>
+            <>
+              <Link
+                href="/dashboard/admin/settings"
+                onClick={() => setSidebarOpen(false)}
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                  pathname.startsWith('/dashboard/admin')
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
+                )}
+              >
+                <Shield className="h-4 w-4" />
+                Admin
+              </Link>
+            </>
           )}
         </nav>
       </aside>

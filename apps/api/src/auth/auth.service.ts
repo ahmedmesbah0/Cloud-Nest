@@ -14,6 +14,7 @@ import { ScureBase32Plugin } from '@otplib/plugin-base32-scure';
 import * as qrcode from 'qrcode';
 import { randomBytes, createHash } from 'node:crypto';
 
+import { MailService } from '../mail/mail.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Enable2faDto } from './dto/enable-2fa.dto';
@@ -31,6 +32,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {
     this.totpIssuer = this.configService.get<string>('TOTP_ISSUER', 'CloudNest');
   }
@@ -54,7 +56,12 @@ export class AuthService {
     });
 
     const verifyUrl = `${this.configService.get<string>('NEXT_PUBLIC_API_URL', 'http://localhost:3000')}/auth/verify-email?token=${emailVerifyToken}`;
-    console.log(`[DEV] Email verification link: ${verifyUrl}`);
+    await this.mailService.send({
+      to: dto.email,
+      subject: 'Verify your email',
+      text: `Click here to verify your email: ${verifyUrl}`,
+      html: `<p>Click <a href="${verifyUrl}">here</a> to verify your email.</p>`,
+    });
 
     return { id: user.id, email: user.email, name: user.name };
   }
@@ -210,7 +217,12 @@ export class AuthService {
     });
 
     const resetUrl = `${this.configService.get<string>('NEXT_PUBLIC_API_URL', 'http://localhost:3000')}/auth/reset-password?token=${resetToken}`;
-    console.log(`[DEV] Password reset link: ${resetUrl}`);
+    await this.mailService.send({
+      to: dto.email,
+      subject: 'Password reset',
+      text: `Click here to reset your password: ${resetUrl}`,
+      html: `<p>Click <a href="${resetUrl}">here</a> to reset your password.</p>`,
+    });
 
     return { message: 'If that email exists, a reset link has been sent' };
   }

@@ -5,7 +5,9 @@ async function run() {
   execSync('npx ts-node src/seed/seed-node.ts', { stdio: 'inherit', cwd: __dirname + '/../..' });
 
   console.log('Seeding admin...');
-  execSync('npx ts-node src/seed/seed-admin.ts', { stdio: 'inherit', cwd: __dirname + '/../..' });
+  const emailArg = process.env.ADMIN_EMAIL ? process.env.ADMIN_EMAIL : '';
+  const passArg = process.env.ADMIN_PASSWORD ? process.env.ADMIN_PASSWORD : '';
+  execSync(`npx ts-node src/seed/seed-admin.ts ${emailArg} ${passArg}`, { stdio: 'inherit', cwd: __dirname + '/../..' });
 
   console.log('Seed complete.');
 }

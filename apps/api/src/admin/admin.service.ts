@@ -1,9 +1,13 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProxmoxService } from '../proxmox/proxmox.service';
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly proxmoxService: ProxmoxService,
+  ) {}
 
   async getDashboardStats() {
     const [totalUsers, totalVms, totalNodes, activeVms, totalWallets] = await Promise.all([
@@ -160,11 +164,15 @@ export class AdminService {
   }
 
   async setSetting(key: string, value: string) {
-    return this.prisma.setting.upsert({
+    const result = await this.prisma.setting.upsert({
       where: { key },
       create: { key, value },
       update: { value },
     });
+    if (key.startsWith('proxmox_')) {
+      await this.proxmoxService.refreshConfig();
+    }
+    return result;
   }
 
   async deleteSetting(key: string) {

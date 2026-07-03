@@ -2,9 +2,9 @@ import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
 const prisma = new PrismaClient();
 
-export async function seedAdmin() {
-  const email = 'admin@cloudnest.io';
-  const password = 'AdminP4ss!';
+export async function seedAdmin(emailArg?: string, passwordArg?: string) {
+  const email = emailArg || process.env.ADMIN_EMAIL || 'admin@cloudnest.io';
+  const password = passwordArg || process.env.ADMIN_PASSWORD || 'AdminP4ss!';
 
   const existing = await prisma.user.findUnique({ where: { email } });
 
@@ -74,7 +74,9 @@ export async function seedAdmin() {
   console.log(`Admin user created: ${email} / ${password}`);
 }
 
-seedAdmin()
+const emailArg = process.argv[2] || process.env.ADMIN_EMAIL;
+const passwordArg = process.argv[3] || process.env.ADMIN_PASSWORD;
+seedAdmin(emailArg, passwordArg)
   .catch((e) => {
     console.error('Admin seed failed:', e);
     process.exit(1);

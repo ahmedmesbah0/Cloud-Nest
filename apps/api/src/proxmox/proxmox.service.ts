@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface ProxmoxNode {
   node: string;
@@ -49,14 +50,17 @@ export interface ProxmoxCreateVmOptions {
 export class ProxmoxService implements OnModuleInit {
   private readonly logger = new Logger(ProxmoxService.name);
   private readonly client: AxiosInstance;
-  private readonly host: string;
-  private readonly tokenId: string;
-  private readonly tokenSecret: string;
-  private readonly defaultNode: string;
-  private readonly defaultStorage: string;
+  private host: string;
+  private tokenId: string;
+  private tokenSecret: string;
+  private defaultNode: string;
+  private defaultStorage: string;
   private initialized = false;
 
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly prisma?: PrismaService,
+  ) {
     this.host = configService.get<string>('PROXMOX_HOST', '');
     this.tokenId = configService.get<string>('PROXMOX_API_TOKEN_ID', '');
     this.tokenSecret = configService.get<string>('PROXMOX_API_TOKEN_SECRET', '');
@@ -76,15 +80,42 @@ export class ProxmoxService implements OnModuleInit {
     });
   }
 
-  onModuleInit() {
+  async onModuleInit() {
+    await this.refreshConfig();
+  }
+
+  async refreshConfig() {
+    if (this.prisma) {
+      try {
+        const settings = await this.prisma.setting.findMany({
+          where: { key: { in: ['proxmox_host', 'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_storage'] } },
+        });
+        const map: Record<string, string> = {};
+        for (const s of settings) map[s.key] = s.value;
+
+        if (map.proxmox_host) this.host = map.proxmox_host;
+        if (map.proxmox_token_id) this.tokenId = map.proxmox_token_id;
+        if (map.proxmox_token_secret) this.tokenSecret = map.proxmox_token_secret;
+        if (map.proxmox_node) this.defaultNode = map.proxmox_node;
+        if (map.proxmox_storage) this.defaultStorage = map.proxmox_storage;
+      } catch {
+        this.logger.warn('Could not read Proxmox settings from DB — using env defaults');
+      }
+    }
+
+    const baseURL = this.host
+      ? `https://${this.host}/api2/json`
+      : 'http://localhost:8006/api2/json';
+
+    this.client.defaults.baseURL = baseURL;
+    this.initialized = false;
+
     if (this.host && this.tokenId && this.tokenSecret) {
-      this.client.interceptors.request.use((config) => {
-        config.headers.Authorization = `PVEAPIToken=${this.tokenId}=${this.tokenSecret}`;
-        return config;
-      });
+      this.client.defaults.headers.common.Authorization = `PVEAPIToken=${this.tokenId}=${this.tokenSecret}`;
       this.initialized = true;
-      this.logger.log(`Proxmox service initialized for host ${this.host}`);
+      this.logger.log(`Proxmox service configured for host ${this.host}`);
     } else {
+      delete this.client.defaults.headers.common.Authorization;
       this.logger.warn('Proxmox credentials not configured — service will return empty/mock data');
     }
   }

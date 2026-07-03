@@ -69,27 +69,35 @@ if [ "$NODE_VER" -lt "$NODE_VERSION_MIN" ]; then
 fi
 ok "Node.js found: $(node -v)"
 
-# npm comes with Node.js, but check anyway
+# npm
 if ! command -v npm >/dev/null 2>&1; then
   err "npm not found. Try reinstalling Node.js."
   exit 1
 fi
 ok "npm found: $(npm -v)"
 
-# Optional services check
-HAS_PSQL=false; HAS_REDIS=false
-command -v psql    >/dev/null 2>&1 && HAS_PSQL=true
-command -v redis-cli >/dev/null 2>&1 && HAS_REDIS=true
+echo ""
 
-if ! $HAS_PSQL; then
-  warn "PostgreSQL (psql) not found — install it or use a remote DATABASE_URL in .env"
-  warn "  Ubuntu/Debian: sudo apt-get install postgresql postgresql-contrib"
-  warn "  macOS:         brew install postgresql@16"
-fi
-if ! $HAS_REDIS; then
-  warn "Redis (redis-cli) not found — install it or use a remote REDIS_URL in .env"
-  warn "  Ubuntu/Debian: sudo apt-get install redis-server"
-  warn "  macOS:         brew install redis"
+# ─── Admin credentials ──────────────────────────────────────
+echo -e "${CYAN}─── Admin Account ─────────────────────────────${NC}"
+echo -e "Create the initial administrator account.\n"
+
+read -r -p "Admin email: " ADMIN_EMAIL
+while [ -z "$ADMIN_EMAIL" ]; do
+  read -r -p "Admin email (required): " ADMIN_EMAIL
+done
+
+read -r -s -p "Admin password: " ADMIN_PASSWORD
+echo ""
+while [ -z "$ADMIN_PASSWORD" ]; do
+  read -r -s -p "Admin password (required): " ADMIN_PASSWORD
+  echo ""
+done
+read -r -s -p "Confirm password: " ADMIN_PASSWORD_CONFIRM
+echo ""
+if [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
+  err "Passwords do not match."
+  exit 1
 fi
 
 echo ""
@@ -113,6 +121,55 @@ fi
 
 cd "$INSTALL_DIR"
 
+# ─── Database setup ─────────────────────────────────────────
+echo -e "${CYAN}─── Database Setup ────────────────────────────${NC}"
+
+# Detect local PostgreSQL
+DB_HOST="localhost"
+DB_PORT="5432"
+DB_NAME="cloudnest"
+DB_USER="cloudnest"
+DB_PASS="cloudnest"
+
+if command -v psql >/dev/null 2>&1; then
+  info "PostgreSQL client found. Attempting automatic setup..."
+
+  # Try to connect as postgres superuser
+  if sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+    info "Creating database user and database..."
+
+    # Create user if not exists
+    sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || \
+      sudo -u postgres psql -c "CREATE ROLE $DB_USER WITH LOGIN PASSWORD '$DB_PASS';"
+
+    # Create database if not exists
+    sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || \
+      sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+
+    # Grant permissions
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
+
+    DATABASE_URL="postgresql://$DB_USER:$DB_PASS@$DB_HOST:$DB_PORT/$DB_NAME"
+    ok "PostgreSQL database '$DB_NAME' created."
+  else
+    warn "Could not connect as 'postgres' user. You will need to configure DATABASE_URL manually."
+    DATABASE_URL=""
+  fi
+else
+  warn "PostgreSQL not found. Install it or configure DATABASE_URL manually."
+  warn "  Ubuntu/Debian: sudo apt-get install postgresql postgresql-contrib"
+  warn "  macOS:         brew install postgresql@16"
+  DATABASE_URL=""
+fi
+
+# Redis check
+if ! command -v redis-cli >/dev/null 2>&1; then
+  warn "Redis not found. Install it or configure REDIS_URL manually."
+  warn "  Ubuntu/Debian: sudo apt-get install redis-server"
+  warn "  macOS:         brew install redis"
+fi
+echo ""
+
 # ─── .env setup ─────────────────────────────────────────────
 if [ -f .env ]; then
   warn ".env already exists — skipping generation."
@@ -131,24 +188,19 @@ else
     sed -i "s/JWT_ACCESS_SECRET=change-me-to-a-random-64-char-string/JWT_ACCESS_SECRET=$JWT_ACCESS/" .env
     sed -i "s/JWT_REFRESH_SECRET=change-me-to-another-random-64-char-string/JWT_REFRESH_SECRET=$JWT_REFRESH/" .env
   fi
-  ok "JWT secrets generated and written to .env"
-  echo ""
-  echo -e "${YELLOW}  ─── Manual configuration required ───${NC}"
-  echo -e "  Open ${CYAN}$INSTALL_DIR/.env${NC} and set:"
-  echo -e "    DATABASE_URL     (PostgreSQL connection string)"
-  echo -e "    REDIS_URL        (Redis connection string)"
-  echo -e "    PROXMOX_HOST     (your Proxmox VE host)"
-  echo -e "    PROXMOX_API_TOKEN_ID / PROXMOX_API_TOKEN_SECRET"
-  echo -e "    SMTP_*           (for email verification)"
-  echo ""
-  echo -e "  Default DATABASE_URL: postgresql://cloudnest:cloudnest@localhost:5432/cloudnest"
-  echo -e "  Default REDIS_URL:    redis://localhost:6379"
-  echo ""
+  ok "JWT secrets generated."
 
-  read -r -p "  Edit .env now? [y/N] " EDIT_ENV
-  if [[ "$EDIT_ENV" =~ ^[Yy] ]]; then
-    ${EDITOR:-nano} .env
+  # Set DATABASE_URL if we auto-created the DB
+  if [ -n "$DATABASE_URL" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s|postgresql://.*|$DATABASE_URL|" .env
+    else
+      sed -i "s|postgresql://.*|$DATABASE_URL|" .env
+    fi
+    ok "DATABASE_URL configured for local PostgreSQL."
   fi
+
+  info "Proxmox and SMTP settings can be configured later from the admin dashboard."
 fi
 
 # ─── Install dependencies ───────────────────────────────────
@@ -168,6 +220,13 @@ else
   warn "Database push failed. Make sure PostgreSQL is running and DATABASE_URL in .env is correct."
   warn "You can run 'npm run prisma:push' later after fixing .env."
 fi
+
+# ─── Seed admin ─────────────────────────────────────────────
+info "Creating admin account..."
+ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npx ts-node apps/api/src/seed/seed-admin.ts || \
+  warn "Admin seed failed — you can run it manually later:"
+  warn "  ADMIN_EMAIL=your@email.com ADMIN_PASSWORD=yourpass npx ts-node apps/api/src/seed/seed-admin.ts"
+ok "Admin account created."
 
 # ─── Build ──────────────────────────────────────────────────
 info "Building project..."
@@ -190,14 +249,17 @@ echo -e "  ${YELLOW}Or start individually:${NC}"
 echo -e "    npm run dev:api     # Backend (port 3000)"
 echo -e "    npm run dev:web     # Frontend (port 3001)"
 echo ""
+echo -e "  ${YELLOW}Admin login:${NC}"
+echo -e "    Email:    ${CYAN}$ADMIN_EMAIL${NC}"
+echo -e "    Password: ${CYAN}(your chosen password)${NC}"
+echo ""
+echo -e "  ${YELLOW}After logging in:${NC}"
+echo -e "    1. Go to ${CYAN}Dashboard → Admin${NC}"
+echo -e "    2. Configure Proxmox VE connection"
+echo -e "    3. Configure SMTP for email sending"
+echo ""
 echo -e "  ${YELLOW}API Documentation:${NC}"
 echo -e "    http://localhost:3000/api/docs"
-echo ""
-echo -e "  ${YELLOW}Admin seed (first run):${NC}"
-echo -e "    npm run seed:admin"
-echo ""
-echo -e "  ${YELLOW}Proxmox test (verify VM operations):${NC}"
-echo -e "    npm run proxmox:test-vm"
 echo ""
 echo -e "  ${CYAN}Need help?${NC} https://github.com/ahmedmesbah0/Cloud-Nest/issues"
 echo ""

@@ -32,3 +32,4 @@ jobs:
       - run: npm ci
       - run: npx prisma generate --config prisma.config.ts
       - run: npm run test -w apps/api
+      - run: npm run test -w apps/web

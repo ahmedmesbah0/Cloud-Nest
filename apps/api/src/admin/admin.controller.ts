@@ -157,6 +157,16 @@ export class AdminController {
     return this.adminService.setSetting(key, data.value);
   }
 
+  @Put('settings')
+  @ApiOperation({ summary: 'Set multiple settings at once' })
+  async setSettings(@Body() data: Record<string, string>) {
+    const results: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      results[key] = await this.adminService.setSetting(key, value);
+    }
+    return results;
+  }
+
   @Delete('settings/:key')
   @ApiOperation({ summary: 'Delete a system setting' })
   async deleteSetting(@Param('key') key: string) {

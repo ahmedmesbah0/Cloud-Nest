@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProxmoxService } from '../proxmox/proxmox.service';
 
 describe('AdminService', () => {
   let service: AdminService;
@@ -255,6 +256,7 @@ describe('AdminService', () => {
       providers: [
         AdminService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: ProxmoxService, useValue: { refreshConfig: jest.fn() } },
       ],
     }).compile();
 
