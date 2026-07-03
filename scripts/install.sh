@@ -311,10 +311,12 @@ clone_or_update_repo() {
   log_section "Preparing repository"
   mkdir -p "$INSTALL_DIR"
   if [ -d "$INSTALL_DIR/.git" ]; then
-    info "Updating existing checkout"
-    git -C "$INSTALL_DIR" fetch origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
-    git -C "$INSTALL_DIR" checkout "$INSTALL_BRANCH" >/dev/null 2>&1 || true
-    git -C "$INSTALL_DIR" pull --ff-only origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+    info "Refreshing existing checkout to origin/$INSTALL_BRANCH"
+    git -C "$INSTALL_DIR" remote set-url origin "$REPO_URL" >/dev/null 2>&1 || true
+    git -C "$INSTALL_DIR" fetch --prune origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
+    git -C "$INSTALL_DIR" checkout -B "$INSTALL_BRANCH" "origin/$INSTALL_BRANCH" >/dev/null 2>&1 || true
+    git -C "$INSTALL_DIR" reset --hard "origin/$INSTALL_BRANCH" >/dev/null 2>&1 || true
+    git -C "$INSTALL_DIR" clean -fd >/dev/null 2>&1 || true
   else
     if [ -d "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
       local backup_dir="${INSTALL_DIR}.backup.$(date +%s)"
@@ -395,6 +397,7 @@ write_env_file() {
 install_dependencies() {
   log_section "Installing project dependencies"
   cd "$INSTALL_DIR"
+  rm -rf "$INSTALL_DIR/apps/web/.next" "$INSTALL_DIR/apps/api/dist" "$INSTALL_DIR/node_modules" 2>/dev/null || true
   run_with_retry 3 10 npm install --no-fund --no-audit
   ok "Dependencies installed"
 }
@@ -422,6 +425,7 @@ seed_admin_account() {
 build_project() {
   log_section "Building application"
   cd "$INSTALL_DIR"
+  rm -rf "$INSTALL_DIR/apps/web/.next" "$INSTALL_DIR/apps/api/dist" 2>/dev/null || true
   npm run build
   ok "Build completed"
 }
