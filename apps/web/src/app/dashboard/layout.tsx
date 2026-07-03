@@ -1,0 +1,165 @@
+'use client';
+
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth';
+import { useTheme } from 'next-themes';
+import {
+  Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
+  LogOut, Menu, X, Moon, Sun, ChevronDown, Key, Terminal, Shield,
+} from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { cn } from '@/lib/utils';
+
+const navItems = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard/vms', label: 'VMs', icon: Server },
+  { href: '/dashboard/billing', label: 'Billing', icon: CreditCard },
+  { href: '/dashboard/settings/ssh-keys', label: 'SSH Keys', icon: Key },
+  { href: '/dashboard/settings/api-keys', label: 'API Keys', icon: Terminal },
+  { href: '/dashboard/support', label: 'Support', icon: LifeBuoy },
+];
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { user, logout, loading } = useAuth();
+  const { theme, setTheme } = useTheme();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login');
+    }
+  }, [user, loading, router]);
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-2 border-blue-400 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  const isAdmin = user.roles?.some((r) => r.role.name === 'admin');
+
+  return (
+    <div className="min-h-screen bg-white dark:bg-slate-900">
+      <aside className={cn(
+        'fixed inset-y-0 left-0 z-50 w-64 bg-slate-50 dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transform transition-transform lg:translate-x-0',
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+      )}>
+        <div className="flex items-center justify-between h-16 px-4 border-b border-slate-200 dark:border-slate-700">
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <Cloud className="h-7 w-7 text-blue-500" />
+            <span className="font-bold text-slate-900 dark:text-white">CloudNest</span>
+          </Link>
+          <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-500">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <nav className="p-4 space-y-1">
+          {navItems.map(({ href, label, icon: Icon }) => {
+            const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
+            return (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => setSidebarOpen(false)}
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                  active
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+              </Link>
+            );
+          })}
+          {isAdmin && (
+            <Link
+              href="http://localhost:3000/api/docs"
+              target="_blank"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <Shield className="h-4 w-4" />
+              Admin API
+            </Link>
+          )}
+        </nav>
+      </aside>
+
+      <div className="lg:pl-64">
+        <header className="sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur border-b border-slate-200 dark:border-slate-700">
+          <div className="flex items-center justify-between h-16 px-4">
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-slate-500">
+              <Menu className="h-5 w-5" />
+            </button>
+
+            <div className="flex-1" />
+
+            <div className="flex items-center gap-4">
+              {mounted && (
+                <button
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                >
+                  {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                </button>
+              )}
+
+              <div className="relative">
+                <button
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                  className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-medium">
+                    {(user.name || user.email)[0].toUpperCase()}
+                  </div>
+                  <span className="hidden sm:block">{user.name || user.email}</span>
+                  <ChevronDown className="h-4 w-4 hidden sm:block" />
+                </button>
+
+                {userMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
+                    <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-20 py-1">
+                      <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white">{user.name || 'User'}</p>
+                        <p className="text-xs text-slate-500">{user.email}</p>
+                      </div>
+                      <Link
+                        href="/dashboard/settings/ssh-keys"
+                        onClick={() => setUserMenuOpen(false)}
+                        className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                      >
+                        Settings
+                      </Link>
+                      <button
+                        onClick={() => { setUserMenuOpen(false); logout(); }}
+                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+                      >
+                        <LogOut className="h-4 w-4" /> Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <main className="p-4 sm:p-6 lg:p-8">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}

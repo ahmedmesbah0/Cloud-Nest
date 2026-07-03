@@ -1,0 +1,27 @@
+import * as Joi from 'joi';
+
+export const configSchema = Joi.object({
+  NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
+  PORT: Joi.number().default(3000),
+  DATABASE_URL: Joi.string().required(),
+  REDIS_URL: Joi.string().required(),
+  JWT_ACCESS_SECRET: Joi.string().min(16).required(),
+  JWT_REFRESH_SECRET: Joi.string().min(16).required(),
+  JWT_ACCESS_EXPIRY: Joi.string().default('15m'),
+  JWT_REFRESH_EXPIRY: Joi.string().default('7d'),
+  PROXMOX_HOST: Joi.string().allow(''),
+  PROXMOX_API_TOKEN_ID: Joi.string().allow(''),
+  PROXMOX_API_TOKEN_SECRET: Joi.string().allow(''),
+  PROXMOX_NODE: Joi.string().allow(''),
+  PROXMOX_STORAGE: Joi.string().allow(''),
+  SMTP_HOST: Joi.string().allow(''),
+  SMTP_PORT: Joi.number().default(587),
+  SMTP_USER: Joi.string().allow(''),
+  SMTP_PASS: Joi.string().allow(''),
+  SMTP_FROM: Joi.string().email().allow(''),
+  TOTP_ISSUER: Joi.string().default('CloudNest'),
+  NEXT_PUBLIC_API_URL: Joi.string().default('http://localhost:3000'),
+  CORS_ORIGIN: Joi.string().default('http://localhost:3001'),
+  THROTTLE_TTL: Joi.number().default(60),
+  THROTTLE_LIMIT: Joi.number().default(60),
+});

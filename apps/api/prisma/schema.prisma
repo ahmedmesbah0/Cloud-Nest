@@ -1,0 +1,459 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum VmStatus {
+  running
+  stopped
+  suspended
+  provisioning
+  error
+}
+
+enum VmPowerAction {
+  start
+  stop
+  restart
+  shutdown
+}
+
+enum BackupStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum SnapshotStatus {
+  pending
+  created
+  failed
+}
+
+enum TicketStatus {
+  open
+  in_progress
+  waiting_customer
+  resolved
+  closed
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  passwordHash   String
+  name           String?
+  emailVerified  Boolean   @default(false)
+  emailVerifyToken String?
+  totpSecret     String?
+  totpEnabled    Boolean   @default(false)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  roles            UserRole[]
+  sessions         Session[]
+  apiKeys          ApiKey[]
+  sshKeys          SshKey[]
+  wallet           Wallet?
+  resourcePools    ResourcePool[]
+  vms              Vm[]
+  notifications    Notification[]
+  supportTickets   SupportTicket[]
+  auditLogs        AuditLog[]
+  invoices         Invoice[]
+  voucherRedemptions VoucherRedemption[]
+  ticketMessages   SupportTicketMessage[]
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  description String?
+
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  action      String
+  resource    String
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId])
+}
+
+model UserRole {
+  id     String @id @default(cuid())
+  userId String
+  roleId String
+
+  user   User @relation(fields: [userId], references: [id])
+  role   Role @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, roleId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshToken String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id])
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  key       String   @unique
+  lastUsedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model SshKey {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  publicKey String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Wallet {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  balance    Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user       User     @relation(fields: [userId], references: [id])
+  transactions Transaction[]
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  walletId  String
+  invoiceId String? @unique
+  amount    Int
+  type      String
+  reference String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  wallet    Wallet   @relation(fields: [walletId], references: [id])
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
+
+}
+
+model Invoice {
+  id              String   @id @default(cuid())
+  userId          String
+  amount          Int
+  status          String
+  dueDate         DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id])
+  lineItems       InvoiceLineItem[]
+  transaction     Transaction?
+  payments        Payment[]
+}
+
+model InvoiceLineItem {
+  id        String @id @default(cuid())
+  invoiceId String
+  description String
+  quantity  Int
+  unitPrice Int
+  total     Int
+
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  amount    Int
+  method    String
+  reference String?
+  createdAt DateTime @default(now())
+
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+}
+
+model VoucherCode {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  amount        Int
+  maxRedemptions Int?
+  currentRedemptions Int @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  redemptions   VoucherRedemption[]
+}
+
+model VoucherRedemption {
+  id         String   @id @default(cuid())
+  voucherId  String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  voucher    VoucherCode @relation(fields: [voucherId], references: [id])
+  user       User        @relation(fields: [userId], references: [id])
+}
+
+model Node {
+  id        String @id @default(cuid())
+  proxmoxNodeId String @unique
+  name      String
+  host      String
+  port      Int    @default(8006)
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventory    NodeInventory?
+  vms          Vm[]
+  storagePools StoragePool[]
+  snapshots    Snapshot[]
+  backups      Backup[]
+}
+
+model NodeInventory {
+  id         String @id @default(cuid())
+  nodeId     String @unique
+  totalCores Int
+  usedCores  Int    @default(0)
+  totalMemoryMb Int
+  usedMemoryMb  Int    @default(0)
+  totalDiskGb   Int
+  usedDiskGb    Int    @default(0)
+  updatedAt  DateTime @updatedAt
+
+  node       Node   @relation(fields: [nodeId], references: [id])
+}
+
+model StoragePool {
+  id        String @id @default(cuid())
+  nodeId    String
+  name      String
+  type      String
+  totalGb   Int
+  usedGb    Int    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  node      Node   @relation(fields: [nodeId], references: [id])
+}
+
+model IpPool {
+  id        String @id @default(cuid())
+  name      String
+  subnet    String
+  gateway   String
+  createdAt DateTime @default(now())
+
+  addresses IpAddress[]
+}
+
+model IpAddress {
+  id         String  @id @default(cuid())
+  poolId     String
+  address    String  @unique
+  isAssigned Boolean @default(false)
+  vmId       String?
+
+  pool       IpPool  @relation(fields: [poolId], references: [id])
+  vm         Vm?     @relation(fields: [vmId], references: [id])
+}
+
+model ResourcePool {
+  id          String @id @default(cuid())
+  userId      String
+  totalCores  Int
+  totalMemoryMb Int
+  totalDiskGb Int
+  totalIps    Int    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User   @relation(fields: [userId], references: [id])
+  allocations ResourceAllocation[]
+}
+
+model ResourceAllocation {
+  id          String @id @default(cuid())
+  poolId      String
+  vmId        String @unique
+  cores       Int
+  memoryMb    Int
+  diskGb      Int
+  ips         Int    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  pool        ResourcePool @relation(fields: [poolId], references: [id])
+  vm          Vm           @relation(fields: [vmId], references: [id])
+}
+
+model Vm {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  status       VmStatus @default(provisioning)
+  proxmoxId    Int?
+  nodeId       String?
+  templateId   String?
+  cpuCores     Int
+  memoryMb     Int
+  diskGb       Int
+  cloudInitConfig Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id])
+  node         Node?    @relation(fields: [nodeId], references: [id])
+  template     VmTemplate? @relation(fields: [templateId], references: [id])
+  allocation   ResourceAllocation?
+  ipAddresses  IpAddress[]
+  snapshots    Snapshot[]
+  backups      Backup[]
+}
+
+model VmTemplate {
+  id           String @id @default(cuid())
+  name         String
+  proxmoxTemplateId String
+  osType       String
+  minDiskGb    Int
+  minMemoryMb  Int
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+
+  vms          Vm[]
+}
+
+model OperatingSystem {
+  id        String @id @default(cuid())
+  name      String
+  version   String
+  imageUrl  String?
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Snapshot {
+  id         String         @id @default(cuid())
+  vmId       String
+  name       String
+  status     SnapshotStatus @default(pending)
+  proxmoxId  String?
+  nodeId     String?
+  createdAt  DateTime       @default(now())
+
+  vm         Vm             @relation(fields: [vmId], references: [id])
+  node       Node?          @relation(fields: [nodeId], references: [id])
+}
+
+model Backup {
+  id         String       @id @default(cuid())
+  vmId       String
+  name       String
+  status     BackupStatus @default(pending)
+  proxmoxId  String?
+  nodeId     String?
+  sizeMb     Int?
+  createdAt  DateTime     @default(now())
+  completedAt DateTime?
+
+  vm         Vm           @relation(fields: [vmId], references: [id])
+  node       Node?        @relation(fields: [nodeId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  resource  String
+  resourceId String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id])
+
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model SupportTicket {
+  id        String       @id @default(cuid())
+  userId    String
+  subject   String
+  status    TicketStatus @default(open)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user      User         @relation(fields: [userId], references: [id])
+  messages  SupportTicketMessage[]
+}
+
+model SupportTicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  userId    String
+  body      String
+  createdAt DateTime @default(now())
+
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
+}
+
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model IdempotencyKey {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  action    String
+  resourceId String?
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+}
