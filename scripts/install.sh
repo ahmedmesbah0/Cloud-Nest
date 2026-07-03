@@ -18,6 +18,19 @@ ok() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 err() { echo -e "${RED}[ERR]${NC}   $*" >&2; }
 
+prompt_input() {
+  local prompt="$1"
+  local var_name="$2"
+
+  if [ -t 0 ]; then
+    read -rp "$prompt" "$var_name"
+  elif [ -r /dev/tty ]; then
+    read -rp "$prompt" "$var_name" </dev/tty
+  else
+    read -rp "$prompt" "$var_name"
+  fi
+}
+
 log_section() { echo -e "\n${CYAN}==> $*${NC}"; }
 
 run_with_retry() {
@@ -577,7 +590,7 @@ perform_uninstall() {
     confirm_yes=1
   else
     echo ""
-    read -rp "Are you sure you want to uninstall CloudNest and remove $INSTALL_DIR? (type 'yes' to confirm): " confirm
+    prompt_input "Are you sure you want to uninstall CloudNest and remove $INSTALL_DIR? (type 'yes' to confirm): " confirm
     if [ "$confirm" != "yes" ]; then
       warn "Aborting uninstall"
       return 1
@@ -595,7 +608,7 @@ perform_uninstall() {
 
   if [ -z "${SKIP_DB_DROP:-}" ]; then
     echo ""
-    read -rp "Drop PostgreSQL database and user 'cloudnest'? This is irreversible. (type 'yes' to drop, anything else to skip): " dropdb_confirm
+    prompt_input "Drop PostgreSQL database and user 'cloudnest'? This is irreversible. (type 'yes' to drop, anything else to skip): " dropdb_confirm
     if [ "$dropdb_confirm" = "yes" ]; then
       if require_cmd psql; then
         $SUDO -u postgres dropdb "${DB_NAME:-cloudnest}" >/dev/null 2>&1 || true
@@ -672,7 +685,7 @@ main() {
     echo "  2) update"
     echo "  3) uninstall"
     echo "  4) exit"
-    read -rp $'Enter choice [1-4]: ' choice
+    prompt_input $'Enter choice [1-4]: ' choice
     case "$choice" in
       1|install)
         perform_install
