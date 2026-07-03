@@ -6,7 +6,10 @@ loadAppEnv(path.resolve(process.cwd(), '.env'));
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient({
-  errorFormat: 'pretty',
+  adapter: {
+    provider: 'postgres',
+    adapterName: '@prisma/adapter-pg',
+  },
 });
 
 function getAdminCredentials() {
@@ -100,9 +103,11 @@ async function main() {
   await seedAdmin(credentials.email, credentials.password);
 }
 
-main()
-  .catch((error) => {
-    console.error('Admin seed failed:', error);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+if (require.main === module) {
+  main()
+    .catch((error) => {
+      console.error('Admin seed failed:', error);
+      process.exit(1);
+    })
+    .finally(() => prisma.$disconnect());
+}

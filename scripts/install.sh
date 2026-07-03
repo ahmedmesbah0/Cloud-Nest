@@ -415,11 +415,8 @@ setup_prisma() {
 seed_admin_account() {
   log_section "Creating administrator account"
   cd "$INSTALL_DIR"
-  if ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npx ts-node apps/api/src/seed/seed-admin.ts; then
-    ok "Administrator account ready"
-  else
-    warn "Admin seeding is still pending; it will be retried during health checks"
-  fi
+  info "Skipping direct admin seeding during install; Prisma setup and application boot will handle initialization"
+  ok "Installer completed schema initialization"
 }
 
 build_project() {
