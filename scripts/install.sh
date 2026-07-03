@@ -37,6 +37,16 @@ ensure_tty_input() {
   fi
 }
 
+normalize_action() {
+  case "${1:-}" in
+    1|install) echo "install" ;;
+    2|update) echo "update" ;;
+    3|uninstall) echo "uninstall" ;;
+    4|exit|quit|q) echo "exit" ;;
+    *) echo "" ;;
+  esac
+}
+
 log_section() { echo -e "\n${CYAN}==> $*${NC}"; }
 
 run_with_retry() {
@@ -669,8 +679,11 @@ main() {
     ensure_system_packages
   fi
 
+  local requested_action
+  requested_action="$(normalize_action "${1:-}")"
+
   # If script is called with a direct command, run it non-interactively
-  case "${1:-}" in
+  case "$requested_action" in
     install)
       perform_install
       exit $?
@@ -682,6 +695,10 @@ main() {
     uninstall)
       perform_uninstall
       exit $?
+      ;;
+    exit)
+      echo "Exiting."
+      exit 0
       ;;
   esac
 
