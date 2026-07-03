@@ -426,6 +426,8 @@ build_project() {
   log_section "Building application"
   cd "$INSTALL_DIR"
   rm -rf "$INSTALL_DIR/apps/web/.next" "$INSTALL_DIR/apps/api/dist" 2>/dev/null || true
+  export NODE_ENV=production
+  export CI=1
   npm run build
   ok "Build completed"
 }
@@ -651,10 +653,17 @@ main() {
   echo ""
 
   detect_os
-  if [ "$OS_ID" != "ubuntu" ] && [ "$OS_ID" != "debian" ] && [ "$OS_ID" != "raspbian" ]; then
-    err "Unsupported OS: $OS_NAME"
-    exit 1
-  fi
+  case "$OS_ID" in
+    ubuntu|debian|raspbian|linux|flatpak|freedesktop-sdk) ;;
+    *)
+      if [[ "$OS_NAME" == *"Freedesktop SDK"* ]] || [[ "$OS_NAME" == *"Flatpak"* ]] || [ "$OS_ID" = "unknown" ]; then
+        warn "Treating current environment as a generic Linux host for installer compatibility"
+      else
+        err "Unsupported OS: $OS_NAME"
+        exit 1
+      fi
+      ;;
+  esac
   info "Detected OS: $OS_NAME ($OS_VERSION)"
   info "Detected architecture: $(detect_arch)"
 
