@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VmService } from './vm.service';
-import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto, QemuHardwareDto } from './dto/vm.dto';
+import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto, QemuHardwareDto, SetNetworkDto, SetDnsDto } from './dto/vm.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
@@ -205,6 +205,52 @@ export class VmController {
       if ((dto as any)[key] !== undefined) config[key] = (dto as any)[key];
     }
     return this.vmService.updateHardwareConfig(userId, id, config);
+  }
+
+  // --- Network Interfaces ---
+
+  @Get(':id/network')
+  @ApiOperation({ summary: 'List network interfaces (net0..netN)' })
+  async getNetwork(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.getNetworkInterfaces(userId, id);
+  }
+
+  @Post(':id/network')
+  @ApiOperation({ summary: 'Add or update a network interface' })
+  async setNetwork(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: SetNetworkDto,
+  ) {
+    return this.vmService.setNetworkInterface(userId, id, dto.key, dto.value);
+  }
+
+  @Delete(':id/network/:key')
+  @ApiOperation({ summary: 'Delete a network interface' })
+  async deleteNetwork(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('key') key: string,
+  ) {
+    return this.vmService.deleteNetworkInterface(userId, id, key);
+  }
+
+  // --- DNS ---
+
+  @Get(':id/dns')
+  @ApiOperation({ summary: 'Get DNS settings' })
+  async getDns(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.getDnsConfig(userId, id);
+  }
+
+  @Put(':id/dns')
+  @ApiOperation({ summary: 'Update DNS settings' })
+  async setDns(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: SetDnsDto,
+  ) {
+    return this.vmService.setDnsConfig(userId, id, dto);
   }
 
   // --- Firewall ---

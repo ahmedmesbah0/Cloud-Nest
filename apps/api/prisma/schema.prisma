@@ -340,6 +340,9 @@ model Vm {
   suspendedAt  DateTime?
   cloudInitConfig Json?
   backupStorage String?
+  nameserver1  String?
+  nameserver2  String?
+  searchdomain String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

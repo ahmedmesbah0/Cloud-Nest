@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { useState, useCallback } from 'react';
 import api from '@/lib/api';
-import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu } from 'lucide-react';
+import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu, Wifi, Globe } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -56,6 +56,8 @@ export default function VmDetailPage() {
   const [showReinstall, setShowReinstall] = useState(false);
   const [showIso, setShowIso] = useState(false);
   const [showHardware, setShowHardware] = useState(false);
+  const [showNetwork, setShowNetwork] = useState(false);
+  const [showDns, setShowDns] = useState(false);
 
   const [resizeForm, setResizeForm] = useState({ cpuCores: 0, memoryMb: 0, diskGb: 0 });
   const [reinstallTemplateId, setReinstallTemplateId] = useState('');
@@ -63,6 +65,16 @@ export default function VmDetailPage() {
   const [hardwareForm, setHardwareForm] = useState<Record<string, any>>({});
   const [savingHardware, setSavingHardware] = useState(false);
   const [loadingHardware, setLoadingHardware] = useState(false);
+
+  const [networkInterfaces, setNetworkInterfaces] = useState<Record<string, string>>({});
+  const [loadingNetwork, setLoadingNetwork] = useState(false);
+  const [savingNetwork, setSavingNetwork] = useState(false);
+  const [networkNewKey, setNetworkNewKey] = useState('');
+  const [networkNewValue, setNetworkNewValue] = useState('');
+
+  const [dnsForm, setDnsForm] = useState<{ nameserver1: string; nameserver2: string; searchdomain: string }>({ nameserver1: '', nameserver2: '', searchdomain: '' });
+  const [loadingDns, setLoadingDns] = useState(false);
+  const [savingDns, setSavingDns] = useState(false);
 
   const [createBacking, setCreateBacking] = useState(false);
   const [creatingSnapshot, setCreatingSnapshot] = useState(false);
@@ -393,6 +405,36 @@ export default function VmDetailPage() {
               <Cpu className="h-4 w-4" /> Hardware
             </button>
             <button
+              onClick={async () => {
+                setLoadingNetwork(true);
+                setShowNetwork(true);
+                try {
+                  const res = await api.get(`/vms/${vm.id}/network`);
+                  setNetworkInterfaces(res.data);
+                } catch { setNetworkInterfaces({}); }
+                setLoadingNetwork(false);
+              }}
+              disabled={isProvisioning}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+            >
+              <Wifi className="h-4 w-4" /> Network
+            </button>
+            <button
+              onClick={async () => {
+                setLoadingDns(true);
+                setShowDns(true);
+                try {
+                  const res = await api.get(`/vms/${vm.id}/dns`);
+                  setDnsForm({ nameserver1: res.data.nameserver1 || '', nameserver2: res.data.nameserver2 || '', searchdomain: res.data.searchdomain || '' });
+                } catch { setDnsForm({ nameserver1: '', nameserver2: '', searchdomain: '' }); }
+                setLoadingDns(false);
+              }}
+              disabled={isProvisioning}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+            >
+              <Globe className="h-4 w-4" /> DNS
+            </button>
+            <button
               onClick={() => setShowReinstall(true)}
               disabled={isProvisioning}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
@@ -699,6 +741,126 @@ export default function VmDetailPage() {
                 <button type="submit" disabled={actionVm} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Mount ISO</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Network Interfaces Modal */}
+      {showNetwork && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Network Interfaces</h3>
+            {loadingNetwork ? (
+              <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-400 border-t-transparent rounded-full" /></div>
+            ) : (
+              <>
+                <p className="text-xs text-amber-600 dark:text-amber-400 mb-3">VM must be stopped to change network config.</p>
+                <div className="space-y-3 mb-4">
+                  {Object.keys(networkInterfaces).length === 0 ? (
+                    <p className="text-sm text-slate-500">No network interfaces.</p>
+                  ) : (
+                    Object.entries(networkInterfaces).map(([key, value]) => (
+                      <div key={key} className="flex items-start gap-2 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-mono text-slate-900 dark:text-white break-all">{key}: {value}</p>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Delete ${key}?`)) return;
+                            setSavingNetwork(true);
+                            try {
+                              await api.delete(`/vms/${vm.id}/network/${key}`);
+                              toast.success(`${key} deleted`);
+                              const res = await api.get(`/vms/${vm.id}/network`);
+                              setNetworkInterfaces(res.data);
+                            } catch (err: any) { toast.error(err.response?.data?.message || 'Delete failed'); }
+                            setSavingNetwork(false);
+                          }}
+                          disabled={savingNetwork}
+                          className="text-red-500 hover:text-red-700 shrink-0"
+                        ><Trash className="h-4 w-4" /></button>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Add / Update Interface</h4>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Key</label>
+                    <input type="text" value={networkNewKey} onChange={(e) => setNetworkNewKey(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="net0" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Value</label>
+                    <input type="text" value={networkNewValue} onChange={(e) => setNetworkNewValue(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0" />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!/^net\d+$/.test(networkNewKey)) { toast.error('Key must be net0, net1, etc.'); return; }
+                      if (!networkNewValue) { toast.error('Value is required'); return; }
+                      setSavingNetwork(true);
+                      try {
+                        await api.post(`/vms/${vm.id}/network`, { key: networkNewKey, value: networkNewValue });
+                        toast.success(`${networkNewKey} updated`);
+                        const res = await api.get(`/vms/${vm.id}/network`);
+                        setNetworkInterfaces(res.data);
+                        setNetworkNewKey('');
+                        setNetworkNewValue('');
+                      } catch (err: any) { toast.error(err.response?.data?.message || 'Failed to update'); }
+                      setSavingNetwork(false);
+                    }}
+                    disabled={savingNetwork}
+                    className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >{savingNetwork ? 'Saving...' : 'Save'}</button>
+                </div>
+                <div className="flex justify-end mt-4">
+                  <button type="button" onClick={() => setShowNetwork(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Close</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* DNS Settings Modal */}
+      {showDns && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">DNS Settings</h3>
+            {loadingDns ? (
+              <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-400 border-t-transparent rounded-full" /></div>
+            ) : (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                setSavingDns(true);
+                try {
+                  const payload: Record<string, string> = {};
+                  if (dnsForm.nameserver1) payload.nameserver1 = dnsForm.nameserver1;
+                  if (dnsForm.nameserver2) payload.nameserver2 = dnsForm.nameserver2;
+                  if (dnsForm.searchdomain) payload.searchdomain = dnsForm.searchdomain;
+                  await api.put(`/vms/${vm.id}/dns`, payload);
+                  toast.success('DNS settings saved');
+                  setShowDns(false);
+                } catch (err: any) { toast.error(err.response?.data?.message || 'Failed to save DNS'); }
+                setSavingDns(false);
+              }} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nameserver 1</label>
+                  <input type="text" value={dnsForm.nameserver1} onChange={(e) => setDnsForm({ ...dnsForm, nameserver1: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="8.8.8.8" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nameserver 2</label>
+                  <input type="text" value={dnsForm.nameserver2} onChange={(e) => setDnsForm({ ...dnsForm, nameserver2: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="8.8.4.4" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Search Domain</label>
+                  <input type="text" value={dnsForm.searchdomain} onChange={(e) => setDnsForm({ ...dnsForm, searchdomain: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="example.com" />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button type="button" onClick={() => setShowDns(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Cancel</button>
+                  <button type="submit" disabled={savingDns} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">{savingDns ? 'Saving...' : 'Save'}</button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

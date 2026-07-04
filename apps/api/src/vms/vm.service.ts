@@ -522,6 +522,82 @@ export class VmService {
     return { message: 'Hardware configuration updated. Reboot the VM for changes to take effect.' };
   }
 
+  // --- Network Interfaces ---
+
+  async getNetworkInterfaces(userId: string, vmId: string): Promise<Record<string, string>> {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    const config = await this.proxmox.getVmConfig(node.proxmoxNodeId, vm.proxmoxId);
+    const result: Record<string, string> = {};
+    for (const key of Object.keys(config)) {
+      if (key.startsWith('net') && /^\d+$/.test(key.slice(3))) {
+        result[key] = String(config[key]);
+      }
+    }
+    return result;
+  }
+
+  async setNetworkInterface(userId: string, vmId: string, key: string, value: string) {
+    if (!/^net\d+$/.test(key)) throw new BadRequestException('Invalid network key (must be netN)');
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change network config');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    await this.proxmox.updateVmConfig(vm.proxmoxId, { [key]: value }, node.proxmoxNodeId);
+    await this.prisma.auditLog.create({
+      data: { userId, action: 'vm.network.set', resource: 'vm', resourceId: vmId, metadata: { key, value } as any },
+    });
+    return { message: `Network interface ${key} updated.` };
+  }
+
+  async deleteNetworkInterface(userId: string, vmId: string, key: string) {
+    if (!/^net\d+$/.test(key)) throw new BadRequestException('Invalid network key (must be netN)');
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change network config');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    await this.proxmox.updateVmConfig(vm.proxmoxId, { [key]: 'delete' }, node.proxmoxNodeId);
+    await this.prisma.auditLog.create({
+      data: { userId, action: 'vm.network.delete', resource: 'vm', resourceId: vmId, metadata: { key } as any },
+    });
+    return { message: `Network interface ${key} deleted.` };
+  }
+
+  // --- DNS ---
+
+  async getDnsConfig(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    return {
+      nameserver1: vm.nameserver1 || null,
+      nameserver2: vm.nameserver2 || null,
+      searchdomain: vm.searchdomain || null,
+    };
+  }
+
+  async setDnsConfig(userId: string, vmId: string, dto: { nameserver1?: string; nameserver2?: string; searchdomain?: string }) {
+    const vm = await this.getVm(vmId, userId);
+    const updated = await this.prisma.vm.update({
+      where: { id: vmId },
+      data: {
+        nameserver1: dto.nameserver1 ?? vm.nameserver1,
+        nameserver2: dto.nameserver2 ?? vm.nameserver2,
+        searchdomain: dto.searchdomain ?? vm.searchdomain,
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: { userId, action: 'vm.dns.update', resource: 'vm', resourceId: vmId, metadata: dto as any },
+    });
+    return {
+      nameserver1: updated.nameserver1,
+      nameserver2: updated.nameserver2,
+      searchdomain: updated.searchdomain,
+    };
+  }
+
   async getVncUrl(userId: string, vmId: string): Promise<{ host: string; port: string; ticket: string; cert: string }> {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');

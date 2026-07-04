@@ -187,6 +187,33 @@ export class QemuHardwareDto {
   args?: string;
 }
 
+export class SetNetworkDto {
+  @ApiProperty({ description: 'Network interface key (e.g. net0)' })
+  @IsString()
+  key!: string;
+
+  @ApiProperty({ description: 'Interface value (e.g. virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0)' })
+  @IsString()
+  value!: string;
+}
+
+export class SetDnsDto {
+  @ApiPropertyOptional({ description: 'Primary nameserver' })
+  @IsOptional()
+  @IsString()
+  nameserver1?: string;
+
+  @ApiPropertyOptional({ description: 'Secondary nameserver' })
+  @IsOptional()
+  @IsString()
+  nameserver2?: string;
+
+  @ApiPropertyOptional({ description: 'Search domain' })
+  @IsOptional()
+  @IsString()
+  searchdomain?: string;
+}
+
 export class VmResponseDto {
   @ApiProperty()
   id!: string;
