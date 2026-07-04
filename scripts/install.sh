@@ -369,6 +369,15 @@ clone_or_update_repo() {
     git clone --depth=1 --branch "$INSTALL_BRANCH" "$REPO_URL" "$INSTALL_DIR"
   fi
   ok "Repository ready at $INSTALL_DIR"
+
+  # Self-update: if the curl-piped installer differs from the freshly-pulled
+  # checkout, re-exec the checkout's copy so we always run the latest code,
+  # never a CDN-cached stale version.
+  local checked_out_script="$INSTALL_DIR/scripts/install.sh"
+  if [ -f "$checked_out_script" ] && [ "${BASH_SOURCE[0]:-$0}" != "$checked_out_script" ]; then
+    info "Re-executing installer from repository checkout (avoids CDN cache staleness)"
+    exec bash "$checked_out_script" install
+  fi
 }
 
 write_env_file() {
