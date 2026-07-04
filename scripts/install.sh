@@ -387,8 +387,10 @@ write_env_file() {
   ensure_env_value "$env_file" "NODE_ENV" "production"
   ensure_env_value "$env_file" "PORT" "$API_PORT"
   ensure_env_value "$env_file" "NEXT_PUBLIC_API_URL" "http://${PUBLIC_HOST}:${API_PORT}"
-  ensure_env_value "$env_file" "DATABASE_URL" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
-  ensure_env_value "$env_file" "REDIS_URL" "redis://localhost:6379"
+  # DATABASE_URL must always reflect the database the installer just provisioned
+  # (correct port + generated password), so force-overwrite it on every run.
+  set_env_value "$env_file" "DATABASE_URL" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
+  set_env_value "$env_file" "REDIS_URL" "redis://localhost:6379"
   ensure_env_value "$env_file" "JWT_ACCESS_SECRET" "$JWT_ACCESS_SECRET"
   ensure_env_value "$env_file" "JWT_REFRESH_SECRET" "$JWT_REFRESH_SECRET"
   ensure_env_value "$env_file" "JWT_ACCESS_EXPIRY" "15m"
@@ -426,6 +428,14 @@ install_dependencies() {
 setup_prisma() {
   log_section "Configuring Prisma"
   cd "$INSTALL_DIR"
+
+  # Ensure DATABASE_URL is exported into the environment for child processes
+  # (prisma.config.ts reads it via env()). Reload from the freshly-written .env.
+  set -a
+  # shellcheck source=/dev/null
+  . "$INSTALL_DIR/.env"
+  set +a
+
   run_with_retry 3 10 npm run prisma:generate
 
   if [ -d "$INSTALL_DIR/apps/api/prisma/migrations" ]; then
