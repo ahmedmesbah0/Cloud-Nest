@@ -406,12 +406,6 @@ write_env_file() {
 
   PUBLIC_HOST="$(get_public_host)"
 
-  if [ -z "${JWT_ACCESS_SECRET:-}" ]; then
-    JWT_ACCESS_SECRET="$(openssl rand -hex 48)"
-  fi
-  if [ -z "${JWT_REFRESH_SECRET:-}" ]; then
-    JWT_REFRESH_SECRET="$(openssl rand -hex 48)"
-  fi
   # DB_PASSWORD was already set by ensure_postgres() to a fixed value;
   # do NOT regenerate it here or .env will diverge from the DB.
   : "${DB_PASSWORD:=CloudNest2026Secure}"
@@ -674,6 +668,8 @@ perform_install() {
   # Set defaults before any step that references them
   : "${ADMIN_EMAIL:=admin}"
   : "${ADMIN_PASSWORD:=admin123}"
+  : "${JWT_ACCESS_SECRET:=$(openssl rand -hex 48)}"
+  : "${JWT_REFRESH_SECRET:=$(openssl rand -hex 48)}"
 
   install_dependencies
   setup_prisma
