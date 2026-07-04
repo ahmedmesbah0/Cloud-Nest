@@ -18,6 +18,7 @@ describe('VmService', () => {
     auditLogs: new Map<string, any>(),
     pools: new Map<string, any>(),
     templates: new Map<string, any>(),
+    nodes: new Map<string, any>(),
     otherUsage: { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 },
   };
 
@@ -28,9 +29,15 @@ describe('VmService', () => {
   };
 
   const addTemplate = (data: any) => {
-    const tmpl = { id: `tmpl-${store.templates.size + 1}`, name: 'Ubuntu 24.04', proxmoxTemplateId: 'ubuntu-2404', osType: 'linux', minDiskGb: 5, minMemoryMb: 512, isActive: true, createdAt: new Date(), ...data };
+    const tmpl = { id: `tmpl-${store.templates.size + 1}`, name: 'Ubuntu 24.04', proxmoxTemplateId: '100', osType: 'linux', minDiskGb: 5, minMemoryMb: 512, isActive: true, createdAt: new Date(), ...data };
     store.templates.set(tmpl.id, tmpl);
     return tmpl;
+  };
+
+  const addNode = (data: any = {}) => {
+    const node = { id: `node-1`, name: 'r730xd', proxmoxNodeId: 'r730xd', host: '172.16.1.10', port: 8006, isActive: true, createdAt: new Date(), updatedAt: new Date(), ...data };
+    store.nodes.set(node.id, node);
+    return node;
   };
 
   beforeEach(async () => {
@@ -39,6 +46,7 @@ describe('VmService', () => {
     store.auditLogs.clear();
     store.pools.clear();
     store.templates.clear();
+    store.nodes.clear();
 
     mockJobService = {
       enqueueJob: jest.fn().mockResolvedValue({ idempotencyKey: 'ik-1', status: 'queued' }),
@@ -51,6 +59,7 @@ describe('VmService', () => {
 
     const mockProxmoxService = {
       getVncTicket: jest.fn().mockResolvedValue({ ticket: 'vnctoken123', port: '5900', cert: 'testcert' }),
+      getNextVmid: jest.fn().mockResolvedValue(100),
     };
 
     const mockTx = {
@@ -132,6 +141,13 @@ describe('VmService', () => {
           return store.templates.get(where.id) ?? null;
         }),
       },
+      node: {
+        findFirst: jest.fn(() => {
+          if (!store.nodes || store.nodes.size === 0) return null;
+          const first = store.nodes.values().next().value;
+          return first ?? null;
+        }),
+      },
       auditLog: {
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
@@ -159,6 +175,7 @@ describe('VmService', () => {
     it('creates a VM and enqueues provision job', async () => {
       const pool = addPool({ userId: 'user-1' });
       const template = addTemplate({});
+      addNode();
 
       const vm = await service.createVm('user-1', {
         name: 'my-vm',
@@ -309,11 +326,10 @@ describe('VmService', () => {
       store.allocations.set('alloc-1', { id: 'alloc-1', poolId: pool.id, vmId: 'vm-1', cores: 2, memoryMb: 4096, diskGb: 50, ips: 0 });
 
       const updated = await service.resizeVm('user-1', 'vm-1', { cpuCores: 4, memoryMb: 8192 });
-      expect(updated.cpuCores).toBe(4);
-      expect(updated.memoryMb).toBe(8192);
-      expect(store.auditLogs.size).toBe(1);
-      const logEntry = Array.from(store.auditLogs.values())[0];
-      expect((logEntry as any).action).toBe('vm.resize');
+      expect(updated.message).toBe('Resize queued');
+      expect(updated.vmId).toBe('vm-1');
+      // Audit log is created by the consumer after job completes, not here
+      expect(store.auditLogs.size).toBe(0);
     });
 
     it('rejects resize that would exceed pool limits', async () => {

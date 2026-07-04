@@ -1,20 +1,17 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Body,
-  Param,
-  Query,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
+  Controller, Get, Post, Put, Delete,
+  Body, Param, Query, UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
+import {
+  PaginationQueryDto, UpdateUserDto, CreditWalletDto,
+  CreateNodeDto, UpdateNodeDto, SetSettingDto,
+} from './dto/admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from './admin.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+
 @ApiTags('Admin')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -22,22 +19,16 @@ import { AdminGuard } from './admin.guard';
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
-  // ─── Dashboard ────────────────────────────────────────
-
   @Get('dashboard')
   @ApiOperation({ summary: 'Dashboard statistics' })
   async dashboard() {
     return this.adminService.getDashboardStats();
   }
 
-  // ─── User Management ──────────────────────────────────
-
   @Get('users')
   @ApiOperation({ summary: 'List all users' })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  async listUsers(@Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.adminService.listUsers(Number(page) || 1, Number(limit) || 50);
+  async listUsers(@Query() query: PaginationQueryDto) {
+    return this.adminService.listUsers(query.page ?? 1, query.limit ?? 50);
   }
 
   @Get('users/:id')
@@ -49,66 +40,61 @@ export class AdminController {
   @Put('users/:id')
   @ApiOperation({ summary: 'Update user profile' })
   async updateUser(
+    @CurrentUser('id') adminUserId: string,
     @Param('id') id: string,
-    @Body() data: { name?: string; emailVerified?: boolean; isActive?: boolean },
+    @Body() dto: UpdateUserDto,
   ) {
-    return this.adminService.updateUser(id, data);
+    return this.adminService.updateUser(adminUserId, id, dto);
   }
 
   @Post('users/:id/deactivate')
   @ApiOperation({ summary: 'Deactivate user' })
-  async deactivateUser(@Param('id') id: string) {
-    return this.adminService.deactivateUser(id);
+  async deactivateUser(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.deactivateUser(adminUserId, id);
   }
 
   @Post('users/:id/activate')
   @ApiOperation({ summary: 'Activate user' })
-  async activateUser(@Param('id') id: string) {
-    return this.adminService.activateUser(id);
+  async activateUser(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.activateUser(adminUserId, id);
   }
 
   @Post('users/:id/credit')
   @ApiOperation({ summary: 'Manually credit user wallet' })
-  async creditWallet(@Param('id') id: string, @Body() data: { amount: number }) {
-    return this.adminService.creditUserWallet(id, data.amount);
+  async creditWallet(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: CreditWalletDto) {
+    return this.adminService.creditUserWallet(adminUserId, id, dto.amount);
   }
 
   @Post('users/:id/roles/:role')
   @ApiOperation({ summary: 'Assign a role to user' })
-  async assignRole(@Param('id') id: string, @Param('role') role: string) {
-    return this.adminService.assignRole(id, role);
+  async assignRole(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Param('role') role: string) {
+    return this.adminService.assignRole(adminUserId, id, role);
   }
 
   @Delete('users/:id/roles/:role')
   @ApiOperation({ summary: 'Remove a role from user' })
-  async removeRole(@Param('id') id: string, @Param('role') role: string) {
-    return this.adminService.removeRole(id, role);
+  async removeRole(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Param('role') role: string) {
+    return this.adminService.removeRole(adminUserId, id, role);
   }
-
-  // ─── VM Oversight ─────────────────────────────────────
 
   @Get('vms')
   @ApiOperation({ summary: 'List all VMs' })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  async listVms(@Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.adminService.listAllVms(Number(page) || 1, Number(limit) || 50);
+  async listVms(@Query() query: PaginationQueryDto) {
+    return this.adminService.listAllVms(query.page ?? 1, query.limit ?? 50);
   }
 
   @Post('vms/:id/force-stop')
   @ApiOperation({ summary: 'Force stop a VM' })
-  async forceStopVm(@Param('id') id: string) {
-    return this.adminService.forceStopVm(id);
+  async forceStopVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.forceStopVm(adminUserId, id);
   }
 
   @Delete('vms/:id')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Force delete a VM' })
-  async forceDeleteVm(@Param('id') id: string) {
-    return this.adminService.forceDeleteVm(id);
+  async forceDeleteVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.forceDeleteVm(adminUserId, id);
   }
-
-  // ─── Node Management ──────────────────────────────────
 
   @Get('nodes')
   @ApiOperation({ summary: 'List all nodes with inventory' })
@@ -124,20 +110,15 @@ export class AdminController {
 
   @Post('nodes')
   @ApiOperation({ summary: 'Create a new node' })
-  async createNode(@Body() data: { proxmoxNodeId: string; name: string; host: string; port?: number }) {
-    return this.adminService.createNode(data);
+  async createNode(@CurrentUser('id') adminUserId: string, @Body() dto: CreateNodeDto) {
+    return this.adminService.createNode(adminUserId, dto);
   }
 
   @Put('nodes/:id')
   @ApiOperation({ summary: 'Update node configuration' })
-  async updateNode(
-    @Param('id') id: string,
-    @Body() data: { name?: string; host?: string; port?: number; isActive?: boolean },
-  ) {
-    return this.adminService.updateNode(id, data);
+  async updateNode(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: UpdateNodeDto) {
+    return this.adminService.updateNode(adminUserId, id, dto);
   }
-
-  // ─── Settings ─────────────────────────────────────────
 
   @Get('settings')
   @ApiOperation({ summary: 'Get all system settings' })
@@ -153,14 +134,14 @@ export class AdminController {
 
   @Put('settings/:key')
   @ApiOperation({ summary: 'Set a system setting' })
-  async setSetting(@Param('key') key: string, @Body() data: { value: string }) {
-    return this.adminService.setSetting(key, data.value);
+  async setSetting(@Param('key') key: string, @Body() dto: SetSettingDto) {
+    return this.adminService.setSetting(key, dto.value);
   }
 
   @Put('settings')
   @ApiOperation({ summary: 'Set multiple settings at once' })
   async setSettings(@Body() data: Record<string, string>) {
-    const results: Record<string, any> = {};
+    const results: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
       results[key] = await this.adminService.setSetting(key, value);
     }
@@ -173,17 +154,11 @@ export class AdminController {
     return this.adminService.deleteSetting(key);
   }
 
-  // ─── Audit Logs ───────────────────────────────────────
-
   @Get('audit-logs')
   @ApiOperation({ summary: 'View audit logs' })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  async getAuditLogs(@Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.adminService.getAuditLogs(Number(page) || 1, Number(limit) || 100);
+  async getAuditLogs(@Query() query: PaginationQueryDto) {
+    return this.adminService.getAuditLogs(query.page ?? 1, query.limit ?? 100);
   }
-
-  // ─── Roles ────────────────────────────────────────────
 
   @Get('roles')
   @ApiOperation({ summary: 'List all roles with permissions' })

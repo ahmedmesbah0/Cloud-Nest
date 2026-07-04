@@ -7,10 +7,12 @@ import { useTheme } from 'next-themes';
 import {
   Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
   LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Key, Terminal, Shield,
-  Users, Settings, FileText, UserCheck, HardDrive,
+  Users, Settings, FileText, UserCheck, HardDrive, Bell,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import useSWR from 'swr';
+import api from '@/lib/api';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -40,6 +42,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const { data: notifData } = useSWR('/notifications?page=1&limit=1', (url) =>
+    api.get(url).then((r) => r.data),
+    { refreshInterval: 30000 },
+  );
 
   useEffect(() => setMounted(true), []);
 
@@ -159,6 +165,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
                 </button>
               )}
+
+              <Link
+                href="/dashboard/notifications"
+                className="relative text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              >
+                <Bell className="h-5 w-5" />
+                {(notifData?.unreadCount ?? 0) > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-red-500 rounded-full">
+                    {notifData.unreadCount > 9 ? '9+' : notifData.unreadCount}
+                  </span>
+                )}
+              </Link>
 
               <div className="relative">
                 <button

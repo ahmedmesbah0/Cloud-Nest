@@ -19,7 +19,7 @@ export class VoucherService {
     const existing = await this.prisma.voucherCode.findUnique({ where: { code } });
     if (existing) throw new BadRequestException('Voucher code already exists');
 
-    return this.prisma.voucherCode.create({
+    const voucher = await this.prisma.voucherCode.create({
       data: {
         code,
         amount: data.amount,
@@ -27,6 +27,17 @@ export class VoucherService {
         expiresAt: data.expiresAt,
       },
     });
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'voucher.create',
+        resource: 'voucher',
+        resourceId: voucher.id,
+        metadata: { code, amount: data.amount, maxRedemptions: data.maxRedemptions } as any,
+      },
+    });
+
+    return voucher;
   }
 
   async listVouchers() {
@@ -90,12 +101,24 @@ export class VoucherService {
     });
   }
 
-  async deactivateVoucher(id: string) {
-    await this.getVoucher(id);
-    return this.prisma.voucherCode.update({
+  async deactivateVoucher(id: string, userId?: string) {
+    const voucher = await this.getVoucher(id);
+    const result = await this.prisma.voucherCode.update({
       where: { id },
       data: { isActive: false },
     });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'voucher.deactivate',
+        resource: 'voucher',
+        resourceId: id,
+        metadata: { code: voucher.code, wasActive: voucher.isActive } as any,
+      },
+    });
+
+    return result;
   }
 
   async getVoucherStats() {

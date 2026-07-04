@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VoucherService } from './voucher.service';
 import { CreateVoucherDto, RedeemVoucherDto } from './dto/voucher.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @ApiTags('Vouchers')
@@ -13,6 +14,7 @@ export class VoucherController {
   constructor(private readonly voucherService: VoucherService) {}
 
   @Post()
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Create a voucher (admin)' })
   async create(@Body() dto: CreateVoucherDto) {
     return this.voucherService.createVoucher({
@@ -48,8 +50,9 @@ export class VoucherController {
   }
 
   @Post(':id/deactivate')
-  @ApiOperation({ summary: 'Deactivate a voucher' })
-  async deactivate(@Param('id') id: string) {
-    return this.voucherService.deactivateVoucher(id);
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Deactivate a voucher (admin)' })
+  async deactivate(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.voucherService.deactivateVoucher(id, userId);
   }
 }

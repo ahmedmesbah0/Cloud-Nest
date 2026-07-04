@@ -3,6 +3,8 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
+import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
+import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 
 describe('AdminService', () => {
   let service: AdminService;
@@ -18,6 +20,7 @@ describe('AdminService', () => {
     auditLogs: new Map<string, any>(),
     roles: new Map<string, any>(),
     userRoles: new Map<string, any>(),
+    allocations: new Map<string, any>(),
   };
 
   beforeEach(async () => {
@@ -30,14 +33,13 @@ describe('AdminService', () => {
     store.auditLogs.clear();
     store.roles.clear();
     store.userRoles.clear();
+    store.allocations.clear();
 
     mockPrisma = {
       user: {
         count: jest.fn((args?: any) => {
           let users = Array.from(store.users.values());
-          if (args?.where?.status) {
-            users = users.filter((u: any) => u.status === args.where.status);
-          }
+          if (args?.where?.status) users = users.filter((u: any) => u.status === args.where.status);
           return users.length;
         }),
         findMany: jest.fn(({ skip, take, orderBy, include, where }: any) => {
@@ -45,79 +47,58 @@ describe('AdminService', () => {
           if (orderBy?.createdAt === 'desc') users.sort((a: any, b: any) => b.createdAt - a.createdAt);
           if (where?.isActive !== undefined) users = users.filter((u: any) => u.isActive === where.isActive);
           const result = users.slice(skip || 0, (skip || 0) + (take || 50));
-          if (include?._count) {
-            return result.map((u: any) => ({ ...u, _count: { vms: 0 } }));
-          }
+          if (include?._count) return result.map((u: any) => ({ ...u, _count: { vms: 0 } }));
           return result;
         }),
         findUnique: jest.fn(({ where, include }: any) => {
           const u = store.users.get(where.id);
           if (!u) return null;
-          if (include?.wallet) {
-            return { ...u, wallet: store.wallets.get(where.id) ?? null, vms: [], _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
-          }
-          if (include?._count) {
-            return { ...u, _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
-          }
+          if (include?.wallet) return { ...u, wallet: store.wallets.get(where.id) ?? null, vms: [], _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
+          if (include?._count) return { ...u, _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
           return u;
         }),
         create: jest.fn(({ data }: any) => {
           const u = { id: `u-${store.users.size + 1}`, ...data, isActive: true, createdAt: new Date(), updatedAt: new Date() };
-          store.users.set(u.id, u);
-          return u;
+          store.users.set(u.id, u); return u;
         }),
         update: jest.fn(({ where, data }: any) => {
           const u = store.users.get(where.id);
           if (!u) throw new NotFoundException();
-          Object.assign(u, data);
-          return u;
+          Object.assign(u, data); return u;
         }),
       },
       vm: {
         count: jest.fn((args?: any) => {
           let vms = Array.from(store.vms.values());
-          if (args?.where?.status) {
-            vms = vms.filter((v: any) => v.status === args.where.status);
-          }
+          if (args?.where?.status) vms = vms.filter((v: any) => v.status === args.where.status);
           return vms.length;
         }),
         findMany: jest.fn(({ skip, take, orderBy, include }: any) => {
           const vms = Array.from(store.vms.values());
           if (orderBy?.createdAt === 'desc') vms.sort((a: any, b: any) => b.createdAt - a.createdAt);
           const result = vms.slice(skip || 0, (skip || 0) + (take || 50));
-          if (include?.user) {
-            return result.map((v: any) => ({ ...v, user: store.users.get(v.userId) ?? { email: 'unknown', name: null } }));
-          }
+          if (include?.user) return result.map((v: any) => ({ ...v, user: store.users.get(v.userId) ?? { email: 'unknown', name: null } }));
           return result;
         }),
         findUnique: jest.fn(({ where }: any) => store.vms.get(where.id) ?? null),
         update: jest.fn(({ where, data }: any) => {
           const v = store.vms.get(where.id);
           if (!v) throw new NotFoundException();
-          Object.assign(v, data);
-          return v;
+          Object.assign(v, data); return v;
         }),
-        delete: jest.fn(({ where }: any) => {
-          store.vms.delete(where.id);
-        }),
+        delete: jest.fn(({ where }: any) => { store.vms.delete(where.id); }),
       },
       node: {
         count: jest.fn(() => store.nodes.size),
-        findMany: jest.fn(({ include }: any) => {
-          return Array.from(store.nodes.values()).map((n: any) => ({
-            ...n,
-            inventory: null,
-            storagePools: [],
-            ...(include?.inventory ? { inventory: null } : {}),
-            ...(include?.storagePools ? { storagePools: [] } : {}),
-          }));
-        }),
+        findMany: jest.fn(({ include }: any) => Array.from(store.nodes.values()).map((n: any) => ({
+          ...n, inventory: null, storagePools: [],
+          ...(include?.inventory ? { inventory: null } : {}),
+          ...(include?.storagePools ? { storagePools: [] } : {}),
+        }))),
         findUnique: jest.fn(({ where, include }: any) => {
           if (where.proxmoxNodeId) {
             for (const n of store.nodes.values()) {
-              if ((n as any).proxmoxNodeId === where.proxmoxNodeId) {
-                return { ...n, inventory: null, storagePools: [], vms: [], ...(include || {}) } as any;
-              }
+              if ((n as any).proxmoxNodeId === where.proxmoxNodeId) return { ...n, inventory: null, storagePools: [], vms: [], ...(include || {}) };
             }
             return null;
           }
@@ -127,14 +108,12 @@ describe('AdminService', () => {
         }),
         create: jest.fn(({ data }: any) => {
           const n = { id: `n-${store.nodes.size + 1}`, ...data, isActive: true, createdAt: new Date(), updatedAt: new Date() };
-          store.nodes.set(n.id, n);
-          return n;
+          store.nodes.set(n.id, n); return n;
         }),
         update: jest.fn(({ where, data }: any) => {
           const n = store.nodes.get(where.id);
           if (!n) throw new NotFoundException();
-          Object.assign(n, data);
-          return n;
+          Object.assign(n, data); return n;
         }),
       },
       wallet: {
@@ -146,20 +125,15 @@ describe('AdminService', () => {
         }),
         upsert: jest.fn(({ where, create, update }: any) => {
           const existing = store.wallets.get(where.userId);
-          if (existing) {
-            existing.balance += (update.balance as any).increment || 0;
-            return existing;
-          }
+          if (existing) { existing.balance += (update.balance as any).increment || 0; return existing; }
           const w = { id: `w-${where.userId}`, ...create };
-          store.wallets.set(where.userId, w);
-          return w;
+          store.wallets.set(where.userId, w); return w;
         }),
       },
       transaction: {
         create: jest.fn(({ data }: any) => {
           const t = { id: `tx-${store.transactions.size + 1}`, ...data };
-          store.transactions.set(t.id, t);
-          return t;
+          store.transactions.set(t.id, t); return t;
         }),
       },
       setting: {
@@ -167,17 +141,11 @@ describe('AdminService', () => {
         findUnique: jest.fn(({ where }: any) => store.settings.get(where.key) ?? null),
         upsert: jest.fn(({ where, create, update }: any) => {
           const existing = store.settings.get(where.key);
-          if (existing) {
-            existing.value = update.value;
-            return existing;
-          }
+          if (existing) { existing.value = update.value; return existing; }
           const s = { id: `s-${store.settings.size + 1}`, ...create };
-          store.settings.set(where.key, s);
-          return s;
+          store.settings.set(where.key, s); return s;
         }),
-        delete: jest.fn(({ where }: any) => {
-          store.settings.delete(where.key);
-        }),
+        delete: jest.fn(({ where }: any) => { store.settings.delete(where.key); }),
       },
       auditLog: {
         count: jest.fn(() => store.auditLogs.size),
@@ -185,10 +153,12 @@ describe('AdminService', () => {
           const logs = Array.from(store.auditLogs.values());
           if (orderBy?.createdAt === 'desc') logs.sort((a: any, b: any) => b.createdAt - a.createdAt);
           const result = logs.slice(skip || 0, (skip || 0) + (take || 100));
-          if (include?.user) {
-            return result.map((l: any) => ({ ...l, user: store.users.get((l as any).userId) ?? { email: 'unknown', name: null } }));
-          }
+          if (include?.user) return result.map((l: any) => ({ ...l, user: store.users.get((l as any).userId) ?? { email: 'unknown', name: null } }));
           return result;
+        }),
+        create: jest.fn(({ data }: any) => {
+          const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
+          store.auditLogs.set(log.id, log); return log;
         }),
       },
       role: {
@@ -202,17 +172,12 @@ describe('AdminService', () => {
           const existing = store.roles.get(where.name);
           if (existing) { Object.assign(existing, update); return existing; }
           const r = { id: `r-${store.roles.size + 1}`, ...create };
-          store.roles.set(r.name, r);
-          return r;
+          store.roles.set(r.name, r); return r;
         }),
-        findMany: jest.fn(({ include }: any) => {
-          return Array.from(store.roles.values()).map((r: any) => ({
-            ...r,
-            permissions: [],
-            _count: { users: 0 },
-            ...(include?.permissions ? { permissions: [] } : {}),
-          }));
-        }),
+        findMany: jest.fn(({ include }: any) => Array.from(store.roles.values()).map((r: any) => ({
+          ...r, permissions: [], _count: { users: 0 },
+          ...(include?.permissions ? { permissions: [] } : {}),
+        }))),
       },
       userRole: {
         findFirst: jest.fn(({ where }: any) => {
@@ -235,19 +200,20 @@ describe('AdminService', () => {
         }),
         create: jest.fn(({ data }: any) => {
           const ur = { id: `ur-${store.userRoles.size + 1}`, ...data };
-          store.userRoles.set(ur.id, ur);
-          return ur;
+          store.userRoles.set(ur.id, ur); return ur;
         }),
         deleteMany: jest.fn(({ where }: any) => {
           const toDelete: string[] = [];
           for (const [id, ur] of store.userRoles) {
-            if ((ur as any).userId === where.userId && (ur as any).roleId === where.roleId) {
-              toDelete.push(id);
-            }
+            if ((ur as any).userId === where.userId && (ur as any).roleId === where.roleId) toDelete.push(id);
           }
           for (const id of toDelete) store.userRoles.delete(id);
           return { count: toDelete.length };
         }),
+      },
+      resourceAllocation: {
+        findUnique: jest.fn(({ where }: any) => store.allocations.get(where.vmId) ?? null),
+        delete: jest.fn(({ where }: any) => { store.allocations.delete(where.vmId); }),
       },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
@@ -257,6 +223,8 @@ describe('AdminService', () => {
         AdminService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ProxmoxService, useValue: { refreshConfig: jest.fn() } },
+        { provide: ProxmoxJobService, useValue: { enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }) } },
+        { provide: ResourcePoolService, useValue: { releaseResources: jest.fn().mockResolvedValue({ success: true }) } },
       ],
     }).compile();
 
@@ -291,7 +259,6 @@ describe('AdminService', () => {
   describe('getUser', () => {
     it('returns user with relations', async () => {
       store.users.set('u-1', { id: 'u-1', email: 'a@b.com', name: 'Alice' });
-
       const user = await service.getUser('u-1');
       expect(user.email).toBe('a@b.com');
     });
@@ -302,11 +269,52 @@ describe('AdminService', () => {
   });
 
   describe('updateUser', () => {
-    it('updates user fields', async () => {
+    it('updates user fields and writes audit log', async () => {
       store.users.set('u-1', { id: 'u-1', email: 'a@b.com', name: 'Alice', isActive: true });
 
-      const updated = await service.updateUser('u-1', { name: 'Updated' });
+      const updated = await service.updateUser('admin-1', 'u-1', { name: 'Updated' });
       expect(updated.name).toBe('Updated');
+      expect(store.auditLogs.size).toBe(1);
+      const log = Array.from(store.auditLogs.values())[0];
+      expect((log as any).action).toBe('admin.user.update');
+    });
+  });
+
+  describe('deactivateUser', () => {
+    it('deactivates and writes audit log', async () => {
+      store.users.set('u-1', { id: 'u-1', email: 'a@b.com', isActive: true });
+      await service.deactivateUser('admin-1', 'u-1');
+      expect(store.users.get('u-1').isActive).toBe(false);
+      expect(store.auditLogs.size).toBe(1);
+    });
+  });
+
+  describe('activateUser', () => {
+    it('activates and writes audit log', async () => {
+      store.users.set('u-1', { id: 'u-1', email: 'a@b.com', isActive: false });
+      await service.activateUser('admin-1', 'u-1');
+      expect(store.users.get('u-1').isActive).toBe(true);
+      expect(store.auditLogs.size).toBe(1);
+    });
+  });
+
+  describe('forceStopVm', () => {
+    it('stops VM and writes audit log', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'u-1', name: 'test', status: 'running' });
+      const result = await service.forceStopVm('admin-1', 'vm-1');
+      expect(result.message).toContain('force-stopped');
+      expect(store.vms.get('vm-1').status).toBe('stopped');
+      expect(store.auditLogs.size).toBe(1);
+    });
+  });
+
+  describe('forceDeleteVm', () => {
+    it('deletes VM, releases resources, and writes audit log', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'u-1', name: 'test', status: 'running' });
+      const result = await service.forceDeleteVm('admin-1', 'vm-1');
+      expect(result.message).toContain('force-deleted');
+      expect(store.vms.has('vm-1')).toBe(false);
+      expect(store.auditLogs.size).toBe(1);
     });
   });
 
@@ -314,18 +322,15 @@ describe('AdminService', () => {
     it('gets all settings as key-value', async () => {
       store.settings.set('site_name', { key: 'site_name', value: 'CloudNest' });
       store.settings.set('max_cores', { key: 'max_cores', value: '16' });
-
       const result = await service.getSettings();
       expect(result.site_name).toBe('CloudNest');
       expect(result.max_cores).toBe('16');
     });
 
-    it('sets and updates a setting', async () => {
+    it('sets and updates a setting with audit log', async () => {
       await service.setSetting('site_name', 'CloudNest');
       expect(store.settings.get('site_name').value).toBe('CloudNest');
-
-      await service.setSetting('site_name', 'CloudNest Pro');
-      expect(store.settings.get('site_name').value).toBe('CloudNest Pro');
+      expect(store.auditLogs.size).toBe(1);
     });
 
     it('deletes a setting', async () => {
@@ -340,14 +345,12 @@ describe('AdminService', () => {
   });
 
   describe('nodes', () => {
-    it('creates and lists nodes', async () => {
-      const node = await service.createNode({
-        proxmoxNodeId: 'pve',
-        name: 'Main Node',
-        host: '172.16.1.10',
-        port: 8006,
+    it('creates a node with audit log', async () => {
+      const node = await service.createNode('admin-1', {
+        proxmoxNodeId: 'pve', name: 'Main Node', host: '172.16.1.10', port: 8006,
       });
       expect(node.name).toBe('Main Node');
+      expect(store.auditLogs.size).toBe(1);
 
       const nodes = await service.listNodes();
       expect(nodes).toHaveLength(1);
@@ -355,11 +358,16 @@ describe('AdminService', () => {
 
     it('rejects duplicate proxmoxNodeId', async () => {
       store.nodes.set('n-1', { id: 'n-1', proxmoxNodeId: 'pve', name: 'Existing', host: '10.0.0.1' });
-      await expect(service.createNode({
-        proxmoxNodeId: 'pve',
-        name: 'Duplicate',
-        host: '10.0.0.2',
+      await expect(service.createNode('admin-1', {
+        proxmoxNodeId: 'pve', name: 'Duplicate', host: '10.0.0.2',
       })).rejects.toThrow(BadRequestException);
+    });
+
+    it('updates a node with audit log', async () => {
+      store.nodes.set('n-1', { id: 'n-1', proxmoxNodeId: 'pve', name: 'Old', host: '10.0.0.1' });
+      await service.updateNode('admin-1', 'n-1', { name: 'New' });
+      expect(store.nodes.get('n-1').name).toBe('New');
+      expect(store.auditLogs.size).toBe(1);
     });
   });
 
@@ -367,7 +375,6 @@ describe('AdminService', () => {
     it('returns paginated audit logs', async () => {
       store.auditLogs.set('log-1', { id: 'log-1', action: 'vm.create', resource: 'vm', createdAt: new Date() });
       store.auditLogs.set('log-2', { id: 'log-2', action: 'user.login', resource: 'auth', createdAt: new Date() });
-
       const result = await service.getAuditLogs(1, 10);
       expect(result.logs).toHaveLength(2);
       expect(result.total).toBe(2);
@@ -375,25 +382,31 @@ describe('AdminService', () => {
   });
 
   describe('roles', () => {
-    it('assigns and lists roles', async () => {
+    it('assigns role with audit log', async () => {
       store.users.set('u-1', { id: 'u-1', email: 'a@b.com' });
-
-      await service.assignRole('u-1', 'admin');
+      await service.assignRole('admin-1', 'u-1', 'admin');
       expect(store.roles.has('admin')).toBe(true);
       expect(store.userRoles.size).toBe(1);
-
-      const roles = await service.listRoles();
-      expect(roles).toHaveLength(1);
+      expect(store.auditLogs.size).toBe(1);
     });
 
-    it('removes a role from user', async () => {
+    it('removes a role from user with audit log', async () => {
       store.users.set('u-1', { id: 'u-1', email: 'a@b.com' });
       store.roles.set('admin', { id: 'role-admin', name: 'admin' });
       const role = store.roles.get('admin');
       store.userRoles.set('ur-1', { id: 'ur-1', userId: 'u-1', roleId: role.id });
-
-      await service.removeRole('u-1', 'admin');
+      await service.removeRole('admin-1', 'u-1', 'admin');
       expect(store.userRoles.size).toBe(0);
+      expect(store.auditLogs.size).toBe(1);
+    });
+  });
+
+  describe('creditUserWallet', () => {
+    it('credits wallet and writes audit log', async () => {
+      store.users.set('u-1', { id: 'u-1', email: 'a@b.com' });
+      const wallet = await service.creditUserWallet('admin-1', 'u-1', 5000);
+      expect(wallet.balance).toBe(5000);
+      expect(store.auditLogs.size).toBe(1);
     });
   });
 });

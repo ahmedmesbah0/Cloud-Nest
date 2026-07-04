@@ -40,12 +40,22 @@ export class VmService {
     });
     if (!template) throw new BadRequestException('Template not found');
 
+    const defaultNode = await this.prisma.node.findFirst({
+      where: { isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!defaultNode) throw new BadRequestException('No active node available');
+
+    const vmid = await this.proxmox.getNextVmid();
+
     const vm = await this.prisma.$transaction(async (tx: any) => {
       const vm = await tx.vm.create({
         data: {
           userId,
           name: dto.name,
           status: 'provisioning',
+          proxmoxId: vmid,
+          nodeId: defaultNode.id,
           cpuCores: dto.cpuCores,
           memoryMb: dto.memoryMb,
           diskGb: dto.diskGb,
@@ -67,7 +77,7 @@ export class VmService {
           action: 'vm.create',
           resource: 'vm',
           resourceId: vm.id,
-          metadata: { name: dto.name, templateId: dto.templateId, cpuCores: dto.cpuCores, memoryMb: dto.memoryMb, diskGb: dto.diskGb },
+          metadata: { name: dto.name, templateId: dto.templateId, cpuCores: dto.cpuCores, memoryMb: dto.memoryMb, diskGb: dto.diskGb, vmid, node: defaultNode.id },
         },
       });
 
@@ -76,11 +86,13 @@ export class VmService {
 
     await this.jobService.enqueueJob('create-vm', {
       vmId: vm.id,
+      vmid,
       name: dto.name,
       cores: dto.cpuCores,
       memory: dto.memoryMb,
       disk: dto.diskGb,
-      templateId: dto.templateId,
+      templateVmid: Number(template.proxmoxTemplateId),
+      node: defaultNode.proxmoxNodeId,
     }, {
       userId,
       auditLog: { action: 'vm.provision', resource: 'vm', resourceId: vm.id },
@@ -153,17 +165,17 @@ export class VmService {
   async resizeVm(userId: string, vmId: string, dto: { cpuCores?: number; memoryMb?: number; diskGb?: number }) {
     const vm = await this.getVm(vmId, userId);
 
-    const updatedVm = await this.prisma.$transaction(async (tx: any) => {
-      const pools: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number; totalIps: number }> = await tx.$queryRawUnsafe(
-        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb", "totalIps" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
+    // Check pool limits inside a transaction (read-only, don't update DB yet)
+    await this.prisma.$transaction(async (tx: any) => {
+      const pools: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number }> = await tx.$queryRawUnsafe(
+        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
         userId,
       );
-
       const pool = pools[0];
       if (!pool) throw new BadRequestException('No resource pool found');
 
-      const allocations: Array<{ cores: number; memoryMb: number; diskGb: number; ips: number }> = await tx.$queryRawUnsafe(
-        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb", COALESCE(SUM(ips), 0) as ips FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
+      const allocations: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
+        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb" FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
         pool.id, vmId,
       );
 
@@ -179,49 +191,19 @@ export class VmService {
       const diskDelta = (dto.diskGb ?? vm.diskGb) - Number(currentAlloc.diskGb);
 
       const used = allocations[0];
-      const availableCores = pool.totalCores - Number(used.cores);
-      const availableMemory = pool.totalMemoryMb - Number(used.memoryMb);
-      const availableDisk = pool.totalDiskGb - Number(used.diskGb);
+      const availCores = pool.totalCores - Number(used.cores);
+      const availMem = pool.totalMemoryMb - Number(used.memoryMb);
+      const availDisk = pool.totalDiskGb - Number(used.diskGb);
 
-      if (cpuDelta > 0 && cpuDelta > availableCores) {
-        throw new ForbiddenException(`Insufficient CPU cores: need ${cpuDelta}, available ${availableCores}`);
+      if (cpuDelta > 0 && cpuDelta > availCores) {
+        throw new ForbiddenException(`Insufficient CPU cores: need ${cpuDelta}, available ${availCores}`);
       }
-      if (memDelta > 0 && memDelta > availableMemory) {
-        throw new ForbiddenException(`Insufficient memory: need ${memDelta}MB, available ${availableMemory}MB`);
+      if (memDelta > 0 && memDelta > availMem) {
+        throw new ForbiddenException(`Insufficient memory: need ${memDelta}MB, available ${availMem}MB`);
       }
-      if (diskDelta > 0 && diskDelta > availableDisk) {
-        throw new ForbiddenException(`Insufficient disk: need ${diskDelta}GB, available ${availableDisk}GB`);
+      if (diskDelta > 0 && diskDelta > availDisk) {
+        throw new ForbiddenException(`Insufficient disk: need ${diskDelta}GB, available ${availDisk}GB`);
       }
-
-      const updatedVm = await tx.vm.update({
-        where: { id: vmId },
-        data: {
-          ...(dto.cpuCores && { cpuCores: dto.cpuCores }),
-          ...(dto.memoryMb && { memoryMb: dto.memoryMb }),
-          ...(dto.diskGb && { diskGb: dto.diskGb }),
-        },
-      });
-
-      await tx.resourceAllocation.update({
-        where: { vmId },
-        data: {
-          ...(dto.cpuCores && { cores: dto.cpuCores }),
-          ...(dto.memoryMb && { memoryMb: dto.memoryMb }),
-          ...(dto.diskGb && { diskGb: dto.diskGb }),
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: 'vm.resize',
-          resource: 'vm',
-          resourceId: vmId,
-          metadata: { before: { cpuCores: vm.cpuCores, memoryMb: vm.memoryMb, diskGb: vm.diskGb }, after: dto },
-        },
-      });
-
-      return updatedVm;
     });
 
     await this.jobService.enqueueJob('resize-vm', {
@@ -229,12 +211,14 @@ export class VmService {
       proxmoxId: vm.proxmoxId,
       cores: dto.cpuCores ?? vm.cpuCores,
       memory: dto.memoryMb ?? vm.memoryMb,
+      disk: dto.diskGb ?? vm.diskGb,
+      node: vm.nodeId,
     }, {
       userId,
       auditLog: { action: 'vm.resize.proxmox', resource: 'vm', resourceId: vmId },
     });
 
-    return updatedVm;
+    return { message: 'Resize queued', vmId };
   }
 
   async reinstallVm(userId: string, vmId: string, templateId: string) {

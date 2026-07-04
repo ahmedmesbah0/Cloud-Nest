@@ -3,6 +3,7 @@
 import useSWR from 'swr';
 import { useState } from 'react';
 import api from '@/lib/api';
+import Link from 'next/link';
 import { LifeBuoy, Plus, MessageSquare, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDateTime } from '@/lib/utils';
@@ -95,7 +96,7 @@ export default function SupportPage() {
         ) : (
           <div className="divide-y divide-slate-200 dark:divide-slate-700">
             {(tickets || []).map((ticket: any) => (
-              <div key={ticket.id} className="flex items-center justify-between p-4">
+              <Link key={ticket.id} href={`/dashboard/support/${ticket.id}`} className="flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                 <div className="flex items-center gap-3">
                   <MessageSquare className="h-5 w-5 text-slate-400" />
                   <div>
@@ -109,7 +110,7 @@ export default function SupportPage() {
                   </span>
                   <ChevronRight className="h-4 w-4 text-slate-400" />
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}

@@ -53,6 +53,16 @@ export class WalletService {
         },
       });
 
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'wallet.credit',
+          resource: 'wallet',
+          resourceId: wallet.id,
+          metadata: { amount, reference, balanceAfter: (wallet.balance + amount) } as any,
+        },
+      });
+
       return txRecord;
     });
   }
@@ -84,6 +94,16 @@ export class WalletService {
           type: 'debit',
           reference,
           metadata: (metadata ?? {}) as any,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'wallet.debit',
+          resource: 'wallet',
+          resourceId: wallet.id,
+          metadata: { amount, reference, balanceAfter: (wallet.balance - amount) } as any,
         },
       });
 

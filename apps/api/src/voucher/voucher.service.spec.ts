@@ -80,6 +80,9 @@ describe('VoucherService', () => {
           return t;
         }),
       },
+      auditLog: {
+        create: jest.fn(({ data }: any) => ({ id: `log-${Date.now()}`, ...data })),
+      },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 
@@ -160,7 +163,7 @@ describe('VoucherService', () => {
       await service.createVoucher({ amount: 500, code: 'DEACTIVATE' });
       const v = Array.from(store.vouchers.values()).find((v: any) => (v as any).code === 'DEACTIVATE');
 
-      await service.deactivateVoucher((v as any).id);
+      await service.deactivateVoucher((v as any).id, 'admin-1');
       expect((v as any).isActive).toBe(false);
     });
   });

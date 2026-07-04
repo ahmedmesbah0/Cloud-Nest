@@ -2,7 +2,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ProxmoxService } from '../proxmox/proxmox.service';
+import { ProxmoxService, CLOUDNEST_MANAGED_TAG } from '../proxmox/proxmox.service';
+import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { VmGateway } from '../vms/vm.gateway';
 import { ProxmoxJobData, ProxmoxJobType } from './proxmox-job.service';
 
@@ -28,6 +29,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly proxmox: ProxmoxService,
+    private readonly poolService: ResourcePoolService,
     private readonly vmGateway: VmGateway,
   ) {
     super();
@@ -51,7 +53,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
 
     try {
       const vmId = payload.vmId as string | undefined;
-      const result = await this.executeJob(type, payload);
+      const result = await this.executeJob(type, payload, userId);
 
       await this.prisma.idempotencyKey.update({
         where: { key: idempotencyKey },
@@ -61,9 +63,29 @@ export class ProxmoxJobConsumer extends WorkerHost {
       const newStatus = JOB_STATUS_MAP[type];
       if (vmId && newStatus) {
         const updateData: Record<string, unknown> = { status: newStatus };
-        if (type === 'create-vm' && payload.vmid) {
-          updateData.proxmoxId = payload.vmid;
-          if (payload.node) updateData.nodeId = payload.node;
+
+        // Release pool resources after VM deletion
+        if (type === 'delete-vm') {
+          await this.poolService.releaseResources(vmId);
+        }
+
+        // Update VM + allocation after successful resize
+        if (type === 'resize-vm') {
+          const newCores = payload.cores as number;
+          const newMem = payload.memory as number;
+          const newDisk = payload.disk as number;
+          updateData.cpuCores = newCores;
+          updateData.memoryMb = newMem;
+          updateData.diskGb = newDisk;
+          await this.prisma.resourceAllocation.update({
+            where: { vmId },
+            data: { cores: newCores, memoryMb: newMem, diskGb: newDisk },
+          }).catch(() => {});
+        }
+
+        if (type === 'create-vm') {
+          if (payload.vmid) updateData.proxmoxId = payload.vmid;
+          if (payload.node) updateData.nodeId = payload.node as string;
         }
         await this.prisma.vm.update({
           where: { id: vmId },
@@ -81,6 +103,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: `VM ${newStatus}`,
             type,
           });
+          await this.persistNotification(userId, `VM ${newStatus}`, `Your VM (${payload.name ?? ''}) is now ${newStatus}.`);
         }
       }
 
@@ -96,6 +119,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: 'Backup completed',
             type: 'backup-vm',
           });
+          await this.persistNotification(userId, 'Backup completed', `VM backup completed successfully.`);
         }
       }
 
@@ -111,6 +135,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: 'Snapshot created',
             type: 'create-snapshot',
           });
+          await this.persistNotification(userId, 'Snapshot created', `VM snapshot created successfully.`);
         }
       }
 
@@ -125,6 +150,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: 'Snapshot deleted',
             type: 'delete-snapshot',
           });
+          await this.persistNotification(userId, 'Snapshot deleted', `VM snapshot was deleted.`);
         }
       }
 
@@ -164,46 +190,53 @@ export class ProxmoxJobConsumer extends WorkerHost {
     }
   }
 
-  private async executeJob(type: ProxmoxJobType, payload: Record<string, unknown>) {
+  private async executeJob(type: ProxmoxJobType, payload: Record<string, unknown>, userId?: string) {
     const node = (payload.node as string) ?? undefined;
 
     switch (type) {
-      case 'create-vm':
-        return this.proxmox.createVm(
-          {
-            vmid: payload.vmid as number,
-            name: payload.name as string,
-            cores: payload.cores as number,
-            memory: payload.memory as number,
-            disk: payload.disk as number,
-            storage: payload.storage as string,
-            cloudInitConfig: payload.cloudInitConfig as Record<string, string> | undefined,
-          },
-          node,
-        );
+      case 'create-vm': {
+        const vmid = payload.vmid as number;
+        const templateVmid = payload.templateVmid as number;
+        // Clone from template (full clone), then start the VM
+        await this.proxmox.cloneVm(templateVmid, vmid, { full: 1, name: payload.name as string }, node);
+        await this.proxmox.startVm(vmid, node);
+        // Tag the VM so we only ever manage our own VMs
+        await this.proxmox.setVmTags(vmid, [CLOUDNEST_MANAGED_TAG], node);
+        // Set Notes field with VM metadata for identification in Proxmox UI
+        await this.setVmNotes(vmid, payload, userId, node);
+        return { vmid, status: 'running' };
+      }
 
       case 'start-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.startVm(payload.vmid as number, node);
 
       case 'stop-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.stopVm(payload.vmid as number, node);
 
       case 'shutdown-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.shutdownVm(payload.vmid as number, node);
 
       case 'restart-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.restartVm(payload.vmid as number, node);
 
       case 'delete-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.deleteVm(payload.vmid as number, node);
 
       case 'suspend-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.suspendVm(payload.vmid as number, node);
 
       case 'resume-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.resumeVm(payload.vmid as number, node);
 
       case 'create-snapshot':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.createSnapshot(
           payload.vmid as number,
           payload.name as string,
@@ -211,6 +244,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
         );
 
       case 'delete-snapshot':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.deleteSnapshot(
           payload.vmid as number,
           payload.name as string,
@@ -218,6 +252,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
         );
 
       case 'clone-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.cloneVm(
           payload.vmid as number,
           payload.newId as number,
@@ -229,6 +264,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
         );
 
       case 'backup-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.backupVm(
           payload.vmid as number,
           {
@@ -239,17 +275,27 @@ export class ProxmoxJobConsumer extends WorkerHost {
           node,
         );
 
-      case 'resize-vm':
-        return this.proxmox.updateVmConfig(
-          payload.vmid as number,
-          {
-            cores: payload.cores as number,
-            memory: payload.memory as number,
-          },
-          node,
-        );
+      case 'resize-vm': {
+        const vmid = payload.vmid as number;
+        await this.proxmox.assertVmManaged(vmid, node);
+        const cores = payload.cores as number;
+        const memory = payload.memory as number;
+        const disk = payload.disk as number;
+        // Update CPU and memory
+        await this.proxmox.updateVmConfig(vmid, { cores, memory }, node);
+        // Resize disk if needed (default disk name 'virtio0')
+        if (disk) {
+          try {
+            await this.proxmox.resizeDisk(vmid, 'virtio0', disk, node);
+          } catch {
+            this.logger.warn(`Disk resize for VM ${vmid} to ${disk}G failed — disk may not be resizable via API`);
+          }
+        }
+        return { cores, memory, disk, status: 'resized' };
+      }
 
       case 'reinstall-vm':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.cloneVm(
           payload.templateVmid as number,
           payload.vmid as number,
@@ -258,6 +304,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
         );
 
       case 'mount-iso':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.mountIso(
           payload.vmid as number,
           payload.iso as string,
@@ -266,6 +313,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
         );
 
       case 'eject-iso':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
         return this.proxmox.ejectIso(
           payload.vmid as number,
           node,
@@ -273,6 +321,39 @@ export class ProxmoxJobConsumer extends WorkerHost {
 
       default:
         throw new Error(`Unknown proxmox job type: ${type}`);
+    }
+  }
+
+  private async persistNotification(userId: string, title: string, body: string) {
+    try {
+      await this.prisma.notification.create({
+        data: { userId, title, body },
+      });
+    } catch {
+      // non-critical, ignore
+    }
+  }
+
+  private async setVmNotes(vmid: number, payload: Record<string, unknown>, userId: string | undefined, node: string | undefined) {
+    try {
+      const vmId = payload.vmId as string;
+      if (!vmId) return;
+
+      const vmRecord = await this.prisma.vm.findUnique({
+        where: { id: vmId },
+        include: { ipAddresses: true },
+      });
+      if (!vmRecord) return;
+
+      const ownerId = userId ?? vmRecord.userId;
+      const hostname = (payload.name as string) ?? vmRecord.name;
+      const ip = vmRecord.ipAddresses.length > 0 ? vmRecord.ipAddresses[0].address : 'Pending';
+      const created = vmRecord.createdAt.toISOString().replace('T', ' ').substring(0, 19);
+
+      const description = `CloudNest Managed VM | IP: ${ip} | Hostname: ${hostname} | User: ${ownerId} | Created: ${created}`;
+      await this.proxmox.updateVmConfig(vmid, { description }, node);
+    } catch (error) {
+      this.logger.warn(`Failed to set VM notes for ${vmid}: ${(error as Error).message}`);
     }
   }
 }

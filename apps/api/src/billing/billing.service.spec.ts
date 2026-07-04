@@ -2,6 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BillingService } from './billing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
+import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
+import { ResourcePoolService } from '../resource-pool/resource-pool.service';
+import { ProxmoxService } from '../proxmox/proxmox.service';
 
 describe('BillingService', () => {
   let service: BillingService;
@@ -13,6 +16,8 @@ describe('BillingService', () => {
     wallets: new Map<string, any>(),
     transactions: new Map<string, any>(),
     auditLogs: new Map<string, any>(),
+    invoices: new Map<string, any>(),
+    invoiceLineItems: new Map<string, any>(),
   };
 
   beforeEach(async () => {
@@ -20,6 +25,8 @@ describe('BillingService', () => {
     store.wallets.clear();
     store.transactions.clear();
     store.auditLogs.clear();
+    store.invoices.clear();
+    store.invoiceLineItems.clear();
 
     mockWalletService = {
       getOrCreateWallet: jest.fn().mockImplementation(async (userId: string) => {
@@ -36,7 +43,9 @@ describe('BillingService', () => {
           throw new Error('Insufficient balance');
         }
         w.balance -= amount;
-        return { id: 'tx-1', walletId: w.id, amount: -amount, type: 'debit', reference };
+        const tx = { id: `tx-${store.transactions.size + 1}`, walletId: w.id, amount: -amount, type: 'debit', reference };
+        store.transactions.set(tx.id, tx);
+        return tx;
       }),
       credit: jest.fn(),
     };
@@ -65,16 +74,43 @@ describe('BillingService', () => {
           return log;
         }),
       },
-      resourceAllocation: {
+      invoice: {
+        create: jest.fn(({ data }: any) => {
+          const inv = { id: `inv-${store.invoices.size + 1}`, ...data };
+          store.invoices.set(inv.id, inv);
+          return inv;
+        }),
+        findUnique: jest.fn(),
+      },
+      invoiceLineItem: {
+        create: jest.fn(),
+      },
+      transaction: {
         findMany: jest.fn(),
+        updateMany: jest.fn(),
       },
       wallet: {
         findUnique: jest.fn(),
       },
-      transaction: {
-        findMany: jest.fn(),
-        create: jest.fn(),
+      node: {
+        findUnique: jest.fn(),
       },
+      resourceAllocation: {
+        findMany: jest.fn(),
+      },
+      $transaction: jest.fn((fn: any) => fn(mockPrisma)),
+    };
+
+    const mockJobService = {
+      enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }),
+    };
+
+    const mockPoolService = {
+      releaseResources: jest.fn().mockResolvedValue({ success: true }),
+    };
+
+    const mockProxmoxService = {
+      getVmStatus: jest.fn().mockResolvedValue({ status: 'running' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -82,6 +118,9 @@ describe('BillingService', () => {
         BillingService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: WalletService, useValue: mockWalletService },
+        { provide: ProxmoxJobService, useValue: mockJobService },
+        { provide: ResourcePoolService, useValue: mockPoolService },
+        { provide: ProxmoxService, useValue: mockProxmoxService },
       ],
     }).compile();
 
@@ -93,6 +132,7 @@ describe('BillingService', () => {
       store.vms.set('vm-1', {
         id: 'vm-1',
         userId: 'user-1',
+        name: 'test-vm',
         status: 'running',
         cpuCores: 2,
         memoryMb: 4096,
@@ -106,34 +146,36 @@ describe('BillingService', () => {
       expect(result.billed).toBe(1);
       expect(result.suspended).toBe(0);
 
-      // Verify wallet was debited
-      expect(store.wallets.get('user-1').balance).toBeLessThan(100000);
+      const wallet = store.wallets.get('user-1');
+      expect(wallet.balance).toBeLessThan(100000);
     });
 
     it('suspends VM when billing fails due to insufficient balance', async () => {
+      const now = new Date();
       store.vms.set('vm-2', {
         id: 'vm-2',
         userId: 'user-2',
+        name: 'test-vm',
         status: 'running',
         cpuCores: 2,
         memoryMb: 4096,
         diskGb: 50,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: now,
+        updatedAt: now,
       });
       store.wallets.set('user-2', { id: 'wallet-2', userId: 'user-2', balance: 0 });
 
       await service.runHourlyBilling();
 
-      // VM should be suspended
       const vm = store.vms.get('vm-2');
       expect(vm.status).toBe('suspended');
+      expect(vm.suspendedAt).toBeDefined();
       expect(store.auditLogs.size).toBe(1);
     });
 
     it('processes multiple VMs correctly', async () => {
-      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', status: 'running', cpuCores: 1, memoryMb: 1024, diskGb: 20, createdAt: new Date(), updatedAt: new Date() });
-      store.vms.set('vm-2', { id: 'vm-2', userId: 'user-1', status: 'stopped', cpuCores: 2, memoryMb: 4096, diskGb: 50, createdAt: new Date(), updatedAt: new Date() });
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', cpuCores: 1, memoryMb: 1024, diskGb: 20, createdAt: new Date(), updatedAt: new Date() });
+      store.vms.set('vm-2', { id: 'vm-2', userId: 'user-1', name: 'vm2', status: 'stopped', cpuCores: 2, memoryMb: 4096, diskGb: 50, createdAt: new Date(), updatedAt: new Date() });
       store.wallets.set('user-1', { id: 'wallet-1', userId: 'user-1', balance: 50000 });
 
       const result = await service.runHourlyBilling();
@@ -153,7 +195,6 @@ describe('BillingService', () => {
       });
 
       const estimate = await service.getVmBillingEstimate('vm-1');
-      // 2*50 + 4*10 + 50*2 = 100 + 40 + 100 = 240
       expect(estimate.hourlyCost).toBe(240);
       expect(estimate.dailyCost).toBe(240 * 24);
       expect(estimate.monthlyCost).toBe(240 * 730);
@@ -161,19 +202,21 @@ describe('BillingService', () => {
   });
 
   describe('enterGracePeriod', () => {
-    it('suspends VM and writes audit log', async () => {
+    it('suspends VM, sets suspendedAt, and writes audit log', async () => {
+      const now = new Date();
       store.vms.set('vm-1', {
         id: 'vm-1',
         userId: 'user-1',
         status: 'running',
         cpuCores: 1, memoryMb: 1024, diskGb: 20,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: now,
+        updatedAt: now,
       });
 
       await service.enterGracePeriod('vm-1');
       const vm = store.vms.get('vm-1');
       expect(vm.status).toBe('suspended');
+      expect(vm.suspendedAt).toBeDefined();
       expect(store.auditLogs.size).toBe(1);
     });
   });

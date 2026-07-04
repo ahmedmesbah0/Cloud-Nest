@@ -13,6 +13,8 @@ import { WalletModule } from './wallet/wallet.module';
 import { VoucherModule } from './voucher/voucher.module';
 import { BillingModule } from './billing/billing.module';
 import { AdminModule } from './admin/admin.module';
+import { SupportModule } from './support/support.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -28,7 +30,7 @@ import { AppService } from './app.service';
         }],
       }),
     }),
-    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule],
+    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule],
   controllers: [AppController],
   providers: [
     AppService,

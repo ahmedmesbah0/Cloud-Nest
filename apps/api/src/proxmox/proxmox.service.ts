@@ -47,6 +47,8 @@ export interface ProxmoxCreateVmOptions {
   net?: string;
 }
 
+export const CLOUDNEST_MANAGED_TAG = 'cloudnest-managed';
+
 @Injectable()
 export class ProxmoxService implements OnModuleInit {
   private readonly logger = new Logger(ProxmoxService.name);
@@ -333,6 +335,55 @@ export class ProxmoxService implements OnModuleInit {
     node: string = this.defaultNode,
   ): Promise<string> {
     return this.post<string>(`/nodes/${node}/qemu/${vmid}/config`, config);
+  }
+
+  async setVmTags(
+    vmid: number,
+    tags: string[],
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    return this.updateVmConfig(vmid, { tags: tags.join(' ') }, node);
+  }
+
+  async getVmTags(vmid: number, node: string = this.defaultNode): Promise<string[]> {
+    const config = await this.getVmConfig(node, vmid);
+    const tags = (config.tags as string) ?? '';
+    return tags ? tags.split(/\s+/).filter(Boolean) : [];
+  }
+
+  async getManagedVms(node: string = this.defaultNode): Promise<ProxmoxVm[]> {
+    const vms = await this.getVms(node);
+    const managed: ProxmoxVm[] = [];
+    for (const vm of vms) {
+      try {
+        const tags = await this.getVmTags(vm.vmid, node);
+        if (tags.includes(CLOUDNEST_MANAGED_TAG)) {
+          managed.push(vm);
+        }
+      } catch {
+        // Skip VMs whose config can't be read
+      }
+    }
+    return managed;
+  }
+
+  async assertVmManaged(vmid: number, node: string = this.defaultNode): Promise<void> {
+    const tags = await this.getVmTags(vmid, node);
+    if (!tags.includes(CLOUDNEST_MANAGED_TAG)) {
+      throw new Error(`VM ${vmid} is not managed by CloudNest (missing tag "${CLOUDNEST_MANAGED_TAG}")`);
+    }
+  }
+
+  async resizeDisk(
+    vmid: number,
+    disk: string,
+    sizeGb: number,
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/resize`, {
+      disk,
+      size: `${sizeGb}G`,
+    });
   }
 
   async mountIso(

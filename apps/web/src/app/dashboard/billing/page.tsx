@@ -3,7 +3,8 @@
 import useSWR from 'swr';
 import { useState } from 'react';
 import api from '@/lib/api';
-import { CreditCard, ArrowDownCircle, ArrowUpCircle, Gift } from 'lucide-react';
+import Link from 'next/link';
+import { CreditCard, ArrowDownCircle, ArrowUpCircle, Gift, FileText } from 'lucide-react';
 import { formatCents, formatDateTime } from '@/lib/utils';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import toast from 'react-hot-toast';
@@ -41,7 +42,7 @@ export default function BillingPage() {
     <div>
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">Billing</h1>
 
-      <div className="grid lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid lg:grid-cols-4 gap-6 mb-8">
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
@@ -55,6 +56,18 @@ export default function BillingPage() {
             </div>
           </div>
         </div>
+
+        <Link href="/dashboard/billing/invoices" className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 hover:border-blue-300 dark:hover:border-blue-600 transition-colors">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg flex items-center justify-center">
+              <FileText className="h-5 w-5 text-emerald-500" />
+            </div>
+            <div>
+              <p className="text-sm text-slate-500">Invoices</p>
+              <p className="text-xl font-bold text-slate-900 dark:text-white">View all &rarr;</p>
+            </div>
+          </div>
+        </Link>
 
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 lg:col-span-2">
           <h2 className="text-sm font-medium text-slate-500 mb-3">Redeem voucher</h2>

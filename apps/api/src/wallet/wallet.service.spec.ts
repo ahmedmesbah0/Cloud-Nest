@@ -58,6 +58,9 @@ describe('WalletService', () => {
           return t;
         }),
       },
+      auditLog: {
+        create: jest.fn(({ data }: any) => ({ id: `log-${Date.now()}`, ...data })),
+      },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 

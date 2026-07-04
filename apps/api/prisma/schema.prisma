@@ -14,6 +14,7 @@ enum VmStatus {
   provisioning
   error
   deleted
+  scheduled_deletion
 }
 
 enum VmPowerAction {
@@ -334,6 +335,7 @@ model Vm {
   cpuCores     Int
   memoryMb     Int
   diskGb       Int
+  suspendedAt  DateTime?
   cloudInitConfig Json?
   backupStorage String?
   createdAt    DateTime @default(now())

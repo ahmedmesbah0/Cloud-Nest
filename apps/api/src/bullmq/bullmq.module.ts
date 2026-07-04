@@ -4,11 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import { ProxmoxJobService } from './proxmox-job.service';
 import { ProxmoxJobConsumer } from './proxmox-job.consumer';
 import { VmModule } from '../vms/vm.module';
+import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 
 @Global()
 @Module({
   imports: [
     forwardRef(() => VmModule),
+    ResourcePoolModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: {
@@ -28,6 +30,9 @@ import { VmModule } from '../vms/vm.module';
     }),
     BullModule.registerQueue({
       name: 'proxmox-jobs',
+    }),
+    BullModule.registerQueue({
+      name: 'billing-jobs',
     }),
   ],
   providers: [ProxmoxJobService, ProxmoxJobConsumer],
