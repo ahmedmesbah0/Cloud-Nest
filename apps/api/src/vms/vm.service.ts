@@ -462,6 +462,31 @@ export class VmService {
     return { message: 'Snapshot deletion queued' };
   }
 
+  async rollbackSnapshot(userId: string, vmId: string, snapshotId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const snapshot = await this.prisma.snapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot || snapshot.vmId !== vm.id) throw new NotFoundException('Snapshot not found');
+
+    if (snapshot.status !== 'created') {
+      throw new BadRequestException('Snapshot must be in "created" state to rollback');
+    }
+
+    const vmWithProxmox = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vmWithProxmox?.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+
+    await this.jobService.enqueueJob('rollback-snapshot', {
+      vmId: vm.id,
+      vmid: vmWithProxmox.proxmoxId,
+      name: snapshot.name,
+      node: vm.nodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.snapshot.rollback', resource: 'vm', resourceId: vm.id },
+    });
+
+    return { message: 'Snapshot rollback queued' };
+  }
+
   async getMetrics(
     userId: string,
     vmId: string,

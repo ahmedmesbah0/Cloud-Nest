@@ -85,6 +85,11 @@ export class AuthService {
 
     if (isFirstUser) {
       console.log(`First user registered as admin: ${user.email}`);
+      // First user (admin) doesn't need email verification
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true },
+      });
     } else {
       const emailVerifyToken = randomBytes(32).toString('hex');
       await this.prisma.user.update({
