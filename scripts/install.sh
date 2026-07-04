@@ -238,6 +238,17 @@ ensure_postgres() {
   : "${DB_HOST:=localhost}"
   : "${DB_PORT:=5432}"
 
+  # Detect actual PostgreSQL port if it is running on a non-default port
+  if require_cmd pg_isready; then
+    for candidate_port in 5432 5433 5434 5435; do
+      if pg_isready -h "${DB_HOST}" -p "${candidate_port}" >/dev/null 2>&1; then
+        DB_PORT="${candidate_port}"
+        break
+      fi
+    done
+  fi
+  info "Using PostgreSQL port ${DB_PORT}"
+
   if require_cmd psql; then
     if ! pgrep -x postgres >/dev/null 2>&1; then
       if require_cmd systemctl; then
@@ -247,12 +258,12 @@ ensure_postgres() {
     fi
 
     if [ -n "$SUDO" ]; then
-      if ! $SUDO -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+      if ! $SUDO -u postgres psql -p "${DB_PORT}" -c "SELECT 1" >/dev/null 2>&1; then
         warn "PostgreSQL superuser is not available yet; will retry during health checks"
         return 0
       fi
     else
-      if ! su postgres -c "psql -c 'SELECT 1'" >/dev/null 2>&1; then
+      if ! su postgres -c "psql -p '${DB_PORT}' -c 'SELECT 1'" >/dev/null 2>&1; then
         warn "PostgreSQL superuser is not available yet; will retry during health checks"
         return 0
       fi
@@ -263,22 +274,22 @@ ensure_postgres() {
     fi
 
     if [ -n "$SUDO" ]; then
-      $SUDO -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
-        $SUDO -u postgres psql -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';"
-      $SUDO -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
-        $SUDO -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
-      $SUDO -u postgres psql -c "ALTER ROLE ${DB_USER} WITH SUPERUSER;" >/dev/null 2>&1 || true
-      $SUDO -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null 2>&1 || true
+      $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+        $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';"
+      $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+        $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
+      $SUDO -u postgres psql -p "${DB_PORT}" -c "ALTER ROLE ${DB_USER} WITH SUPERUSER;" >/dev/null 2>&1 || true
+      $SUDO -u postgres psql -p "${DB_PORT}" -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null 2>&1 || true
     else
-      su postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 || \
-        su postgres -c "psql -c \"CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\""
-      su postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 || \
-        su postgres -c "psql -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\""
-      su postgres -c "psql -c \"ALTER ROLE ${DB_USER} WITH SUPERUSER;\"" >/dev/null 2>&1 || true
-      su postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" >/dev/null 2>&1 || true
+      su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 || \
+        su postgres -c "psql -p '${DB_PORT}' -c \"CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\""
+      su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 || \
+        su postgres -c "psql -p '${DB_PORT}' -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\""
+      su postgres -c "psql -p '${DB_PORT}' -c \"ALTER ROLE ${DB_USER} WITH SUPERUSER;\"" >/dev/null 2>&1 || true
+      su postgres -c "psql -p '${DB_PORT}' -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" >/dev/null 2>&1 || true
     fi
 
-    if PGPASSWORD="$DB_PASSWORD" psql "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
+    if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
       ok "PostgreSQL is ready"
     else
       warn "PostgreSQL user/database created but connection validation is still pending"
@@ -391,7 +402,17 @@ write_env_file() {
   ensure_env_value "$env_file" "THROTTLE_TTL" "60"
   ensure_env_value "$env_file" "THROTTLE_LIMIT" "60"
 
-  export $(grep -v '^#' "$env_file" | xargs -d '\n' 2>/dev/null) || true
+  # Load .env into the current shell in a safe, quote-aware way
+  set -a
+  # shellcheck source=/dev/null
+  . "$env_file"
+  set +a
+
+  # Refresh the values that the script tracks with the loaded .env
+  API_PORT="${PORT:-$API_PORT}"
+  ADMIN_EMAIL="${ADMIN_EMAIL:-$ADMIN_EMAIL}"
+  ADMIN_PASSWORD="${ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
+  PUBLIC_HOST="${PUBLIC_HOST:-$PUBLIC_HOST}"
 }
 
 install_dependencies() {
@@ -418,8 +439,17 @@ setup_prisma() {
 seed_admin_account() {
   log_section "Creating administrator account"
   cd "$INSTALL_DIR"
-  info "Skipping direct admin seeding during install; Prisma setup and application boot will handle initialization"
-  ok "Installer completed schema initialization"
+
+  if [ -z "${ADMIN_EMAIL:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; then
+    err "ADMIN_EMAIL or ADMIN_PASSWORD is not set; cannot create admin account"
+    return 1
+  fi
+
+  ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npm run seed:admin || {
+    err "Admin seeding failed"
+    return 1
+  }
+  ok "Administrator account ready: $ADMIN_EMAIL"
 }
 
 build_project() {
@@ -434,21 +464,34 @@ build_project() {
 
 write_pm2_config() {
   log_section "Configuring process manager"
+  cd "$INSTALL_DIR"
+  local env_file="$INSTALL_DIR/.env"
+
+  # Read the final env values directly from the file (stripping surrounding quotes)
+  local _db_url _redis_url _jwt_access _jwt_refresh _api_url _cors_origin
+  _db_url="$(grep -E '^DATABASE_URL=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+  _redis_url="$(grep -E '^REDIS_URL=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+  _jwt_access="$(grep -E '^JWT_ACCESS_SECRET=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+  _jwt_refresh="$(grep -E '^JWT_REFRESH_SECRET=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+  _api_url="$(grep -E '^NEXT_PUBLIC_API_URL=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+  _cors_origin="$(grep -E '^CORS_ORIGIN=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+
   cat > "$INSTALL_DIR/ecosystem.config.cjs" <<EOF
 module.exports = {
   apps: [
     {
       name: 'cloudnest-api',
-      cwd: process.env.CLOUDNEST_INSTALL_DIR || process.cwd(),
+      cwd: '${INSTALL_DIR}',
       script: 'apps/api/dist/main.js',
       env: {
         NODE_ENV: 'production',
-        PORT: process.env.API_PORT || '3000',
-        DATABASE_URL: process.env.DATABASE_URL,
-        REDIS_URL: process.env.REDIS_URL,
-        JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
-        JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
-        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+        PORT: '${API_PORT}',
+        DATABASE_URL: '${_db_url}',
+        REDIS_URL: '${_redis_url}',
+        JWT_ACCESS_SECRET: '${_jwt_access}',
+        JWT_REFRESH_SECRET: '${_jwt_refresh}',
+        NEXT_PUBLIC_API_URL: '${_api_url}',
+        CORS_ORIGIN: '${_cors_origin}',
       },
       autorestart: true,
       watch: false,
@@ -456,13 +499,13 @@ module.exports = {
     },
     {
       name: 'cloudnest-web',
-      cwd: process.env.CLOUDNEST_INSTALL_DIR || process.cwd(),
+      cwd: '${INSTALL_DIR}',
       script: 'node_modules/next/dist/bin/next',
-      args: 'start -p 3001 -H 0.0.0.0',
+      args: 'start -p ${WEB_PORT} -H 0.0.0.0',
       env: {
         NODE_ENV: 'production',
-        PORT: process.env.WEB_PORT || '3001',
-        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+        PORT: '${WEB_PORT}',
+        NEXT_PUBLIC_API_URL: '${_api_url}',
       },
       autorestart: true,
       watch: false,
@@ -476,17 +519,8 @@ EOF
 start_services() {
   log_section "Starting services"
   cd "$INSTALL_DIR"
-  export CLOUDNEST_INSTALL_DIR="$INSTALL_DIR"
-  export API_PORT="$API_PORT"
-  export WEB_PORT="$WEB_PORT"
-  export DATABASE_URL="$(grep '^DATABASE_URL=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
-  export REDIS_URL="$(grep '^REDIS_URL=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
-  export JWT_ACCESS_SECRET="$(grep '^JWT_ACCESS_SECRET=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
-  export JWT_REFRESH_SECRET="$(grep '^JWT_REFRESH_SECRET=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
-  export NEXT_PUBLIC_API_URL="$(grep '^NEXT_PUBLIC_API_URL=' "$INSTALL_DIR/.env" | cut -d= -f2-)"
-
   pm2 delete cloudnest-api cloudnest-web >/dev/null 2>&1 || true
-  pm2 start "$INSTALL_DIR/ecosystem.config.cjs" --env production >/dev/null 2>&1
+  pm2 start "$INSTALL_DIR/ecosystem.config.cjs" >/dev/null 2>&1
   pm2 save >/dev/null 2>&1 || true
   pm2 startup >/dev/null 2>&1 || true
   ok "Services started with PM2"
@@ -530,7 +564,9 @@ run_health_checks() {
     return 1
   fi
 
-  if ! psql "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public" -c 'SELECT 1' >/dev/null 2>&1; then
+  local psql_conn
+  psql_conn="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+  if ! psql "$psql_conn" -c 'SELECT 1' >/dev/null 2>&1; then
     err "PostgreSQL validation failed"
     return 1
   fi

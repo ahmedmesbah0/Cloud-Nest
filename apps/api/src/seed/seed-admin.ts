@@ -1,16 +1,14 @@
 import path from 'node:path';
 import * as argon2 from 'argon2';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 import { loadAppEnv } from './load-env';
 
 loadAppEnv(path.resolve(process.cwd(), '.env'));
 
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient({
-  adapter: {
-    provider: 'postgres',
-    adapterName: '@prisma/adapter-pg',
-  },
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter: new PrismaPg(pool) as any });
 
 function getAdminCredentials() {
   const emailArg = process.argv[2] || process.env.ADMIN_EMAIL;

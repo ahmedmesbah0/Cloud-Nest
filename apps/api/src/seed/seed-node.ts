@@ -1,10 +1,13 @@
 import path from 'node:path';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 import { loadAppEnv } from './load-env';
 
 loadAppEnv(path.resolve(process.cwd(), '.env'));
 
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter: new PrismaPg(pool) as any });
 
 async function seedNode() {
   const proxmoxNodeId = process.env.PROXMOX_NODE || 'pve';
