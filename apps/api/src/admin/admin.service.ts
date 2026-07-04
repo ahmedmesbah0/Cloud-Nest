@@ -1,7 +1,9 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
+import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 
 @Injectable()
 export class AdminService {
@@ -9,6 +11,8 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly proxmoxService: ProxmoxService,
     private readonly poolService: ResourcePoolService,
+    private readonly jobService: ProxmoxJobService,
+    private readonly jwtService: JwtService,
   ) {}
 
   async getDashboardStats() {
@@ -330,5 +334,211 @@ export class AdminService {
     return this.prisma.role.findMany({
       include: { permissions: { include: { permission: true } }, _count: { select: { users: true } } },
     });
+  }
+
+  async listTemplates(page = 1, limit = 50) {
+    const skip = (page - 1) * limit;
+    const [templates, total] = await Promise.all([
+      this.prisma.vmTemplate.findMany({
+        skip, take: limit, orderBy: { name: 'asc' },
+      }),
+      this.prisma.vmTemplate.count(),
+    ]);
+    return { templates, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async createTemplate(adminUserId: string, data: { name: string; proxmoxTemplateId: string; osType: string; minDiskGb: number; minMemoryMb: number }) {
+    const template = await this.prisma.vmTemplate.create({ data });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.template.create',
+        resource: 'template', resourceId: template.id,
+        metadata: { name: data.name, proxmoxTemplateId: data.proxmoxTemplateId } as any,
+      },
+    });
+    return template;
+  }
+
+  async updateTemplate(adminUserId: string, id: string, data: { name?: string; isActive?: boolean; minDiskGb?: number; minMemoryMb?: number }) {
+    const template = await this.prisma.vmTemplate.findUnique({ where: { id } });
+    if (!template) throw new NotFoundException('Template not found');
+    const result = await this.prisma.vmTemplate.update({ where: { id }, data });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.template.update',
+        resource: 'template', resourceId: id,
+        metadata: { changes: data } as any,
+      },
+    });
+    return result;
+  }
+
+  async deleteTemplate(adminUserId: string, id: string) {
+    const template = await this.prisma.vmTemplate.findUnique({ where: { id } });
+    if (!template) throw new NotFoundException('Template not found');
+    await this.prisma.vmTemplate.delete({ where: { id } });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.template.delete',
+        resource: 'template', resourceId: id,
+      },
+    });
+    return { success: true };
+  }
+
+  async toggleNodeMaintenance(adminUserId: string, nodeId: string, isActive: boolean) {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    const result = await this.prisma.node.update({ where: { id: nodeId }, data: { isActive } });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: `admin.node.${isActive ? 'activate' : 'maintenance'}`,
+        resource: 'node', resourceId: nodeId,
+      },
+    });
+    return result;
+  }
+
+  async renameVm(adminUserId: string, vmId: string, name: string) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+    const result = await this.prisma.vm.update({ where: { id: vmId }, data: { name } });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.vm.rename',
+        resource: 'vm', resourceId: vmId,
+        metadata: { oldName: vm.name, newName: name } as any,
+      },
+    });
+    return result;
+  }
+
+  async impersonateUser(adminUserId: string, targetUserId: string) {
+    const targetUser = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!targetUser) throw new NotFoundException('User not found');
+
+    const accessToken = this.jwtService.sign(
+      { sub: targetUser.id, email: targetUser.email, impersonatorId: adminUserId },
+    );
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.user.impersonate',
+        resource: 'user', resourceId: targetUserId,
+      },
+    });
+
+    return { accessToken, user: { id: targetUser.id, email: targetUser.email, name: targetUser.name } };
+  }
+
+  async migrateVm(adminUserId: string, vmId: string, targetNodeId: string, online?: boolean) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID');
+
+    const targetNode = await this.prisma.node.findUnique({ where: { id: targetNodeId } });
+    if (!targetNode) throw new NotFoundException('Target node not found');
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.vm.migrate',
+        resource: 'vm', resourceId: vmId,
+        metadata: { targetNode: targetNode.proxmoxNodeId, online: online ?? false } as any,
+      },
+    });
+
+    await this.jobService.enqueueJob('migrate-vm', {
+      vmId: vm.id,
+      vmid: vm.proxmoxId,
+      targetNode: targetNode.proxmoxNodeId,
+      online: online ?? false,
+      node: vm.nodeId,
+    }, {
+      userId: adminUserId,
+      auditLog: { action: 'admin.vm.migrate', resource: 'vm', resourceId: vm.id },
+    });
+
+    return { message: 'Migration queued' };
+  }
+
+  async getProxmoxTemplates() {
+    if (!this.proxmoxService['initialized']) {
+      return this.prisma.vmTemplate.findMany({ where: { isActive: true } });
+    }
+    try {
+      const proxmoxTemplates = await this.proxmoxService.getTemplates();
+      const dbTemplates = await this.prisma.vmTemplate.findMany();
+      return { proxmox: proxmoxTemplates, db: dbTemplates };
+    } catch {
+      return this.prisma.vmTemplate.findMany({ where: { isActive: true } });
+    }
+  }
+
+  async setBillingPricing(_adminUserId: string, prices: Record<string, number>) {
+    const results: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(prices)) {
+      const settingKey = `pricing_${key}`;
+      results[key] = await this.setSetting(settingKey, String(value));
+    }
+    return results;
+  }
+
+  async getBillingPricing() {
+    const settings = await this.prisma.setting.findMany({
+      where: { key: { startsWith: 'pricing_' } },
+    });
+    const prices: Record<string, string> = {};
+    for (const s of settings) {
+      prices[s.key.replace('pricing_', '')] = s.value;
+    }
+    return prices;
+  }
+
+  async getProxmoxStorage(node: string) {
+    try {
+      const storage = await this.proxmoxService.getStoragePools(node);
+      return storage;
+    } catch {
+      return [];
+    }
+  }
+
+  async getVmFirewall(vmId: string) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+    if (!vm.proxmoxId || !vm.nodeId) return [];
+    try {
+      return await this.proxmoxService.getFirewallRules(vm.nodeId, vm.proxmoxId);
+    } catch {
+      return [];
+    }
+  }
+
+  async addVmFirewall(adminUserId: string, vmId: string, rule: Record<string, unknown>) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID');
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.vm.firewall.add',
+        resource: 'vm', resourceId: vmId,
+        metadata: { rule } as any,
+      },
+    });
+    return this.proxmoxService.addFirewallRule(vm.nodeId, vm.proxmoxId, rule);
+  }
+
+  async deleteVmFirewall(adminUserId: string, vmId: string, pos: number) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID');
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.vm.firewall.delete',
+        resource: 'vm', resourceId: vmId,
+        metadata: { pos } as any,
+      },
+    });
+    return this.proxmoxService.deleteFirewallRule(vm.nodeId, vm.proxmoxId, pos);
   }
 }

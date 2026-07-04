@@ -53,4 +53,10 @@ export class BillingController {
   async getInvoice(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.billingService.getInvoice(userId, id);
   }
+
+  @Get('invoices/:id/pdf')
+  @ApiOperation({ summary: 'Get invoice PDF data' })
+  async getInvoicePdf(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.billingService.getInvoicePdf(id, userId);
+  }
 }

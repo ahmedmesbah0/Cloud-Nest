@@ -32,9 +32,13 @@ function getAdminCredentials() {
 }
 
 export async function seedAdmin(emailArg?: string, passwordArg?: string) {
-  const { email, password } = { email: emailArg, password: passwordArg };
-  const resolvedEmail = email || process.env.ADMIN_EMAIL || 'admin';
-  const resolvedPassword = password || process.env.ADMIN_PASSWORD || 'AdminP4ss!';
+  const resolvedEmail = emailArg || process.env.ADMIN_EMAIL || '';
+  const resolvedPassword = passwordArg || process.env.ADMIN_PASSWORD || '';
+
+  if (!resolvedEmail || !resolvedPassword) {
+    console.log('Admin seeding skipped: ADMIN_EMAIL and ADMIN_PASSWORD must be provided');
+    return;
+  }
 
   const existing = await prisma.user.findUnique({ where: { email: resolvedEmail } });
   if (existing) {

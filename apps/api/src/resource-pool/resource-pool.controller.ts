@@ -8,12 +8,16 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ResourcePoolService } from './resource-pool.service';
 import { CreatePoolDto, UpdatePoolDto, AllocateResourcesDto } from './dto/create-pool.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Resource Pools')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('resource-pools')
 export class ResourcePoolController {
   constructor(private readonly poolService: ResourcePoolService) {}

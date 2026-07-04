@@ -351,6 +351,18 @@ export class ProxmoxService implements OnModuleInit {
     return tags ? tags.split(/\s+/).filter(Boolean) : [];
   }
 
+  async getFirewallRules(node: string, vmid: number): Promise<unknown[]> {
+    return this.get<unknown[]>(`/nodes/${node}/qemu/${vmid}/firewall/rules`);
+  }
+
+  async addFirewallRule(node: string, vmid: number, rule: Record<string, unknown>): Promise<string> {
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/firewall/rules`, rule);
+  }
+
+  async deleteFirewallRule(node: string, vmid: number, pos: number): Promise<string> {
+    return this.del<string>(`/nodes/${node}/qemu/${vmid}/firewall/rules/${pos}`);
+  }
+
   async getManagedVms(node: string = this.defaultNode): Promise<ProxmoxVm[]> {
     const vms = await this.getVms(node);
     const managed: ProxmoxVm[] = [];
@@ -384,6 +396,19 @@ export class ProxmoxService implements OnModuleInit {
       disk,
       size: `${sizeGb}G`,
     });
+  }
+
+  async migrateVm(
+    vmid: number,
+    targetNode: string,
+    options?: { online?: boolean },
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    const body: Record<string, unknown> = {
+      target: targetNode,
+    };
+    if (options?.online !== undefined) body.online = options.online;
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/migrate`, body);
   }
 
   async mountIso(

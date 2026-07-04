@@ -20,7 +20,8 @@ export type ProxmoxJobType =
   | 'resize-vm'
   | 'reinstall-vm'
   | 'mount-iso'
-  | 'eject-iso';
+  | 'eject-iso'
+  | 'migrate-vm';
 
 export interface ProxmoxJobData {
   type: ProxmoxJobType;

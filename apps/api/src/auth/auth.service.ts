@@ -44,26 +44,64 @@ export class AuthService {
     }
 
     const passwordHash = await argon2.hash(dto.password);
-    const emailVerifyToken = randomBytes(32).toString('hex');
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash,
-        name: dto.name,
-        emailVerifyToken,
-      },
+    const adminRole = await this.prisma.role.upsert({
+      where: { name: 'admin' },
+      update: {},
+      create: { name: 'admin', description: 'Administrator with full access' },
     });
 
-    const verifyUrl = `${this.configService.get<string>('NEXT_PUBLIC_API_URL', 'http://localhost:3000')}/auth/verify-email?token=${emailVerifyToken}`;
-    await this.mailService.send({
-      to: dto.email,
-      subject: 'Verify your email',
-      text: `Click here to verify your email: ${verifyUrl}`,
-      html: `<p>Click <a href="${verifyUrl}">here</a> to verify your email.</p>`,
+    const customerRole = await this.prisma.role.upsert({
+      where: { name: 'customer' },
+      update: {},
+      create: { name: 'customer', description: 'Standard customer' },
     });
 
-    return { id: user.id, email: user.email, name: user.name };
+    const { user, isFirstUser } = await this.prisma.$transaction(async (tx) => {
+      const userCount = await tx.user.count();
+      const isFirstUser = userCount === 0;
+
+      const u = await tx.user.create({
+        data: {
+          email: dto.email,
+          passwordHash,
+          name: dto.name,
+          emailVerified: isFirstUser,
+        },
+      });
+
+      await tx.userRole.create({
+        data: { userId: u.id, roleId: customerRole.id },
+      });
+
+      if (isFirstUser) {
+        await tx.userRole.create({
+          data: { userId: u.id, roleId: adminRole.id },
+        });
+      }
+
+      return { user: u, isFirstUser };
+    });
+
+    if (isFirstUser) {
+      console.log(`First user registered as admin: ${user.email}`);
+    } else {
+      const emailVerifyToken = randomBytes(32).toString('hex');
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerifyToken },
+      });
+
+      const verifyUrl = `${this.configService.get<string>('NEXT_PUBLIC_API_URL', 'http://localhost:3000')}/auth/verify-email?token=${emailVerifyToken}`;
+      await this.mailService.send({
+        to: dto.email,
+        subject: 'Verify your email',
+        text: `Click here to verify your email: ${verifyUrl}`,
+        html: `<p>Click <a href="${verifyUrl}">here</a> to verify your email.</p>`,
+      });
+    }
+
+    return { id: user.id, email: user.email, name: user.name, isAdmin: isFirstUser };
   }
 
   async verifyEmail(token: string) {

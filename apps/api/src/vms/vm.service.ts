@@ -71,6 +71,18 @@ export class VmService {
         diskGb: dto.diskGb,
       }, tx);
 
+      // Auto-assign an IP from the default pool
+      const availableIp = await tx.ipAddress.findFirst({
+        where: { isAssigned: false, vmId: null },
+        orderBy: { address: 'asc' },
+      });
+      if (availableIp) {
+        await tx.ipAddress.update({
+          where: { id: availableIp.id },
+          data: { isAssigned: true, vmId: vm.id },
+        });
+      }
+
       await tx.auditLog.create({
         data: {
           userId,
@@ -408,6 +420,59 @@ export class VmService {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
     return this.proxmox.getVmRrdData(vm.proxmoxId, timeframe, vm.nodeId ?? undefined);
+  }
+
+  async getFirewallRules(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    return this.proxmox.getFirewallRules(vm.nodeId, vm.proxmoxId);
+  }
+
+  async addFirewallRule(userId: string, vmId: string, rule: Record<string, unknown>) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    await this.prisma.auditLog.create({
+      data: {
+        userId, action: 'vm.firewall.add',
+        resource: 'vm', resourceId: vmId,
+        metadata: { rule } as any,
+      },
+    });
+    return this.proxmox.addFirewallRule(vm.nodeId, vm.proxmoxId, rule);
+  }
+
+  async deleteFirewallRule(userId: string, vmId: string, pos: number) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    await this.prisma.auditLog.create({
+      data: {
+        userId, action: 'vm.firewall.delete',
+        resource: 'vm', resourceId: vmId,
+        metadata: { pos } as any,
+      },
+    });
+    return this.proxmox.deleteFirewallRule(vm.nodeId, vm.proxmoxId, pos);
+  }
+
+  async migrateVm(userId: string, vmId: string, targetNodeId: string, online?: boolean) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+
+    const targetNode = await this.prisma.node.findUnique({ where: { id: targetNodeId } });
+    if (!targetNode) throw new NotFoundException('Target node not found');
+
+    await this.jobService.enqueueJob('migrate-vm', {
+      vmId: vm.id,
+      vmid: vm.proxmoxId,
+      targetNode: targetNode.proxmoxNodeId,
+      online: online ?? false,
+      node: vm.nodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.migrate', resource: 'vm', resourceId: vm.id },
+    });
+
+    return { message: 'Migration queued' };
   }
 
   async getVncUrl(userId: string, vmId: string): Promise<{ host: string; port: string; ticket: string; cert: string }> {

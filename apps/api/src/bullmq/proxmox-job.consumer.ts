@@ -319,6 +319,16 @@ export class ProxmoxJobConsumer extends WorkerHost {
           node,
         );
 
+      case 'migrate-vm': {
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
+        return this.proxmox.migrateVm(
+          payload.vmid as number,
+          payload.targetNode as string,
+          { online: payload.online as boolean },
+          node,
+        );
+      }
+
       default:
         throw new Error(`Unknown proxmox job type: ${type}`);
     }

@@ -110,6 +110,10 @@ describe('VmService', () => {
         }
         return [];
       }),
+      ipAddress: {
+        findFirst: jest.fn(() => null),
+        update: jest.fn(({ where, data }: any) => ({ id: where.id, ...data })),
+      },
       auditLog: {
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };

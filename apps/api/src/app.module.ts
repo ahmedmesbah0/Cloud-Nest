@@ -15,6 +15,10 @@ import { BillingModule } from './billing/billing.module';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
+import { SshKeysModule } from './ssh-keys/ssh-keys.module';
+import { IpPoolModule } from './ip-pool/ip-pool.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -30,7 +34,7 @@ import { AppService } from './app.service';
         }],
       }),
     }),
-    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule],
+    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, IpPoolModule, MetricsModule],
   controllers: [AppController],
   providers: [
     AppService,

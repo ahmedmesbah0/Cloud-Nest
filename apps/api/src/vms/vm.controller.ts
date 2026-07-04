@@ -110,6 +110,16 @@ export class VmController {
     return this.vmService.ejectIso(userId, id);
   }
 
+  @Post(':id/migrate')
+  @ApiOperation({ summary: 'Migrate VM to another node' })
+  async migrate(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: { targetNodeId: string; online?: boolean },
+  ) {
+    return this.vmService.migrateVm(userId, id, dto.targetNodeId, dto.online);
+  }
+
   // --- Backups ---
 
   @Get(':id/backups')
@@ -173,5 +183,23 @@ export class VmController {
   @ApiOperation({ summary: 'Delete a VM' })
   async delete(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.vmService.deleteVm(userId, id);
+  }
+
+  @Get(':id/firewall')
+  @ApiOperation({ summary: 'List firewall rules' })
+  async getFirewallRules(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.getFirewallRules(userId, id);
+  }
+
+  @Post(':id/firewall')
+  @ApiOperation({ summary: 'Add a firewall rule' })
+  async addFirewallRule(@CurrentUser('id') userId: string, @Param('id') id: string, @Body() body: any) {
+    return this.vmService.addFirewallRule(userId, id, body);
+  }
+
+  @Delete(':id/firewall/:pos')
+  @ApiOperation({ summary: 'Delete a firewall rule' })
+  async deleteFirewallRule(@CurrentUser('id') userId: string, @Param('id') id: string, @Param('pos') pos: number) {
+    return this.vmService.deleteFirewallRule(userId, id, pos);
   }
 }

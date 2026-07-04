@@ -47,6 +47,12 @@ export class AdminController {
     return this.adminService.updateUser(adminUserId, id, dto);
   }
 
+  @Post('users/:id/impersonate')
+  @ApiOperation({ summary: 'Generate impersonation token (admin)' })
+  async impersonate(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.impersonateUser(adminUserId, id);
+  }
+
   @Post('users/:id/deactivate')
   @ApiOperation({ summary: 'Deactivate user' })
   async deactivateUser(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
@@ -94,6 +100,16 @@ export class AdminController {
   @ApiOperation({ summary: 'Force delete a VM' })
   async forceDeleteVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
     return this.adminService.forceDeleteVm(adminUserId, id);
+  }
+
+  @Post('vms/:id/migrate')
+  @ApiOperation({ summary: 'Migrate VM to another node (admin)' })
+  async migrateVm(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Body() dto: { targetNodeId: string; online?: boolean },
+  ) {
+    return this.adminService.migrateVm(adminUserId, id, dto.targetNodeId, dto.online);
   }
 
   @Get('nodes')
@@ -164,5 +180,83 @@ export class AdminController {
   @ApiOperation({ summary: 'List all roles with permissions' })
   async listRoles() {
     return this.adminService.listRoles();
+  }
+
+  @Get('templates')
+  @ApiOperation({ summary: 'List VM templates' })
+  async listTemplates(@Query() query: PaginationQueryDto) {
+    return this.adminService.listTemplates(query.page ?? 1, query.limit ?? 50);
+  }
+
+  @Post('templates')
+  @ApiOperation({ summary: 'Create a VM template' })
+  async createTemplate(@CurrentUser('id') adminUserId: string, @Body() body: any) {
+    return this.adminService.createTemplate(adminUserId, body);
+  }
+
+  @Put('templates/:id')
+  @ApiOperation({ summary: 'Update a VM template' })
+  async updateTemplate(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() body: any) {
+    return this.adminService.updateTemplate(adminUserId, id, body);
+  }
+
+  @Delete('templates/:id')
+  @ApiOperation({ summary: 'Delete a VM template' })
+  async deleteTemplate(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.deleteTemplate(adminUserId, id);
+  }
+
+  @Get('templates/proxmox')
+  @ApiOperation({ summary: 'Get Proxmox templates + DB templates' })
+  async getProxmoxTemplates() {
+    return this.adminService.getProxmoxTemplates();
+  }
+
+  @Put('nodes/:id/maintenance')
+  @ApiOperation({ summary: 'Toggle node maintenance mode' })
+  async toggleNodeMaintenance(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() body: any) {
+    return this.adminService.toggleNodeMaintenance(adminUserId, id, body.isActive);
+  }
+
+  @Put('vms/:id/rename')
+  @ApiOperation({ summary: 'Rename a VM' })
+  async renameVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() body: any) {
+    return this.adminService.renameVm(adminUserId, id, body.name);
+  }
+
+  @Get('proxmox-storage/:node')
+  @ApiOperation({ summary: 'Get Proxmox storage pools for a node' })
+  async getProxmoxStorage(@Param('node') node: string) {
+    return this.adminService.getProxmoxStorage(node);
+  }
+
+  @Get('billing-pricing')
+  @ApiOperation({ summary: 'Get billing pricing' })
+  async getBillingPricing() {
+    return this.adminService.getBillingPricing();
+  }
+
+  @Put('billing-pricing')
+  @ApiOperation({ summary: 'Set billing pricing' })
+  async setBillingPricing(@CurrentUser('id') adminUserId: string, @Body() body: Record<string, number>) {
+    return this.adminService.setBillingPricing(adminUserId, body);
+  }
+
+  @Get('vms/:id/firewall')
+  @ApiOperation({ summary: 'Get VM firewall rules (admin)' })
+  async getVmFirewall(@Param('id') id: string) {
+    return this.adminService.getVmFirewall(id);
+  }
+
+  @Post('vms/:id/firewall')
+  @ApiOperation({ summary: 'Add VM firewall rule (admin)' })
+  async addVmFirewall(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() body: any) {
+    return this.adminService.addVmFirewall(adminUserId, id, body);
+  }
+
+  @Delete('vms/:id/firewall/:pos')
+  @ApiOperation({ summary: 'Delete VM firewall rule (admin)' })
+  async deleteVmFirewall(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Param('pos') pos: number) {
+    return this.adminService.deleteVmFirewall(adminUserId, id, pos);
   }
 }

@@ -5,6 +5,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum VmStatus {
@@ -244,6 +245,7 @@ model Node {
   storagePools StoragePool[]
   snapshots    Snapshot[]
   backups      Backup[]
+  resourceMetrics ResourceMetric[]
 }
 
 model NodeInventory {
@@ -289,6 +291,7 @@ model IpAddress {
   address    String  @unique
   isAssigned Boolean @default(false)
   vmId       String?
+  ptrRecord  String?
 
   pool       IpPool  @relation(fields: [poolId], references: [id])
   vm         Vm?     @relation(fields: [vmId], references: [id])
@@ -348,6 +351,7 @@ model Vm {
   ipAddresses  IpAddress[]
   snapshots    Snapshot[]
   backups      Backup[]
+  resourceMetrics ResourceMetric[]
 }
 
 model VmTemplate {
@@ -361,6 +365,19 @@ model VmTemplate {
   createdAt    DateTime @default(now())
 
   vms          Vm[]
+}
+
+model ResourceMetric {
+  id        String   @id @default(cuid())
+  vmId      String?
+  nodeId    String?
+  cpuUsage  Float?
+  memoryUsedMb Int?
+  diskUsedGb   Int?
+  recordedAt DateTime @default(now())
+
+  vm        Vm?      @relation(fields: [vmId], references: [id])
+  node      Node?    @relation(fields: [nodeId], references: [id])
 }
 
 model OperatingSystem {

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
@@ -225,6 +226,7 @@ describe('AdminService', () => {
         { provide: ProxmoxService, useValue: { refreshConfig: jest.fn() } },
         { provide: ProxmoxJobService, useValue: { enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }) } },
         { provide: ResourcePoolService, useValue: { releaseResources: jest.fn().mockResolvedValue({ success: true }) } },
+        { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('test-impersonation-token') } },
       ],
     }).compile();
 

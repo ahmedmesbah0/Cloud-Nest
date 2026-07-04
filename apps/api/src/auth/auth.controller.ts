@@ -52,8 +52,9 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
-  async getProfile(@CurrentUser('id') userId: string) {
-    return this.authService.getProfile(userId);
+  async getProfile(@CurrentUser() user: any) {
+    const profile = await this.authService.getProfile(user.id);
+    return { ...profile, impersonatorId: user.impersonatorId };
   }
 
   @Post('verify-2fa')

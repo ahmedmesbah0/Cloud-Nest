@@ -5,12 +5,18 @@ import { ProxmoxJobService } from './proxmox-job.service';
 import { ProxmoxJobConsumer } from './proxmox-job.consumer';
 import { VmModule } from '../vms/vm.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
+import { MailModule } from '../mail/mail.module';
+import { MetricsModule } from '../metrics/metrics.module';
+import { ReportJobConsumer } from '../billing/report-job.consumer';
+import { MetricsJobConsumer } from '../metrics/metrics-job.consumer';
 
 @Global()
 @Module({
   imports: [
     forwardRef(() => VmModule),
     ResourcePoolModule,
+    MailModule,
+    MetricsModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: {
@@ -34,8 +40,14 @@ import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
     BullModule.registerQueue({
       name: 'billing-jobs',
     }),
+    BullModule.registerQueue({
+      name: 'metrics-jobs',
+    }),
+    BullModule.registerQueue({
+      name: 'report-jobs',
+    }),
   ],
-  providers: [ProxmoxJobService, ProxmoxJobConsumer],
+  providers: [ProxmoxJobService, ProxmoxJobConsumer, ReportJobConsumer, MetricsJobConsumer],
   exports: [BullModule, ProxmoxJobService],
 })
 export class BullmqModule {}

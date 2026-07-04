@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
@@ -296,5 +296,40 @@ export class BillingService {
     if (!invoice) throw new NotFoundException('Invoice not found');
     if (invoice.userId !== userId) throw new NotFoundException('Invoice not found');
     return invoice;
+  }
+
+  async getInvoicePdf(invoiceId: string, userId: string) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { lineItems: true, user: { select: { name: true, email: true } } },
+    });
+    if (!invoice) throw new NotFoundException('Invoice not found');
+    if (invoice.userId !== userId) throw new ForbiddenException('Not your invoice');
+
+    return {
+      id: invoice.id,
+      createdAt: invoice.createdAt,
+      amount: invoice.amount,
+      status: invoice.status,
+      dueDate: invoice.dueDate,
+      paidAt: invoice.paidAt,
+      lineItems: invoice.lineItems,
+      customer: invoice.user,
+    };
+  }
+
+  async getAdminInvoicePdf(invoiceId: string) {
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: {
+        lineItems: true,
+        user: { select: { name: true, email: true } },
+      },
+    });
+    if (!invoice) throw new NotFoundException('Invoice not found');
+    return {
+      ...invoice,
+      customer: invoice.user,
+    };
   }
 }

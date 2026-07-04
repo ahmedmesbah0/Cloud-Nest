@@ -7,7 +7,7 @@ import { useTheme } from 'next-themes';
 import {
   Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
   LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Key, Terminal, Shield,
-  Users, Settings, FileText, UserCheck, HardDrive, Bell,
+  Users, Settings, FileText, UserCheck, HardDrive, Bell, Globe, Gift, BarChart3,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -28,9 +28,14 @@ const adminNavItems = [
   { href: '/dashboard/admin/users', label: 'Users', icon: Users },
   { href: '/dashboard/admin/vms', label: 'VMs', icon: Server },
   { href: '/dashboard/admin/nodes', label: 'Nodes', icon: HardDrive },
+  { href: '/dashboard/admin/templates', label: 'Templates', icon: LayoutDashboard },
+  { href: '/dashboard/admin/ip-pools', label: 'IP Pools', icon: Globe },
+  { href: '/dashboard/admin/vouchers', label: 'Vouchers', icon: Gift },
+  { href: '/dashboard/admin/billing', label: 'Billing', icon: CreditCard },
   { href: '/dashboard/admin/settings', label: 'Settings', icon: Settings },
   { href: '/dashboard/admin/audit-logs', label: 'Audit Logs', icon: FileText },
   { href: '/dashboard/admin/roles', label: 'Roles', icon: UserCheck },
+  { href: '/dashboard/admin/metrics', label: 'Metrics', icon: BarChart3 },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

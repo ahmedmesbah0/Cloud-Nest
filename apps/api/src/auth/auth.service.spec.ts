@@ -34,10 +34,40 @@ describe('AuthService', () => {
   const store = {
     users: new Map<string, any>(),
     sessions: new Map<string, any>(),
+    roles: new Map<string, any>(),
+    userRoles: new Map<string, any>(),
+  };
+
+  const mockTx = (tx?: any): any => tx || {
+    user: {
+      count: jest.fn(() => store.users.size),
+      create: jest.fn((args: { data: any }) => {
+        const user = {
+          id: `user-${store.users.size + 1}`,
+          emailVerified: false,
+          totpEnabled: false,
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...args.data,
+        };
+        store.users.set(user.id, user);
+        return user;
+      }),
+    },
+    userRole: {
+      create: jest.fn((args: { data: { userId: string; roleId: string } }) => {
+        const ur = { id: `ur-${store.userRoles.size + 1}`, ...args.data };
+        store.userRoles.set(ur.id, ur);
+        return ur;
+      }),
+    },
   };
 
   const mockPrisma = {
+    $transaction: jest.fn(async (fn: any) => fn(mockTx())),
     user: {
+      count: jest.fn(() => store.users.size),
       findUnique: jest.fn((args: { where: { id?: string; email?: string } }) => {
         for (const u of store.users.values()) {
           if (args.where.id && u.id === args.where.id) return u;
@@ -73,6 +103,27 @@ describe('AuthService', () => {
         if (!user) throw new Error('User not found');
         Object.assign(user, args.data);
         return user;
+      }),
+    },
+    role: {
+      upsert: jest.fn((args: { where: { name: string }; create: any; update: any }) => {
+        for (const r of store.roles.values()) {
+          if (r.name === args.where.name) return r;
+        }
+        const role = {
+          id: `role-${store.roles.size + 1}`,
+          name: args.create.name,
+          description: args.create.description,
+        };
+        store.roles.set(role.id, role);
+        return role;
+      }),
+    },
+    userRole: {
+      create: jest.fn((args: { data: { userId: string; roleId: string } }) => {
+        const ur = { id: `ur-${store.userRoles.size + 1}`, ...args.data };
+        store.userRoles.set(ur.id, ur);
+        return ur;
       }),
     },
     session: {
@@ -138,13 +189,15 @@ describe('AuthService', () => {
     service = module.get<AuthService>(AuthService);
     store.users.clear();
     store.sessions.clear();
+    store.roles.clear();
+    store.userRoles.clear();
     jest.clearAllMocks();
   });
 
   // ─── Registration ───────────────────────────────────────────
 
   describe('register', () => {
-    it('creates a user, returns id/email/name, and sends verification email', async () => {
+    it('creates a user, returns id/email/name, and first user becomes admin', async () => {
       const result = await service.register({
         email: 'alice@test.com',
         password: 'StrongP4ss!',
@@ -155,6 +208,7 @@ describe('AuthService', () => {
         id: expect.stringMatching(/^user-/),
         email: 'alice@test.com',
         name: 'Alice',
+        isAdmin: true,
       });
 
       // User persisted in store
@@ -162,8 +216,11 @@ describe('AuthService', () => {
       const saved = store.users.get(result.id);
       expect(saved.email).toBe('alice@test.com');
       expect(saved.passwordHash).not.toBe('StrongP4ss!'); // hashed
-      expect(saved.emailVerifyToken).toBeTruthy();
-      expect(saved.emailVerified).toBe(false);
+      expect(saved.emailVerified).toBe(true); // first user auto-verified
+      expect(saved.emailVerifyToken).toBeUndefined(); // no email sent
+
+      // Admin and customer roles assigned
+      expect(store.userRoles.size).toBe(2);
     });
 
     it('rejects duplicate email with ConflictException', async () => {
@@ -187,6 +244,11 @@ describe('AuthService', () => {
   // ─── Email verification ─────────────────────────────────────
 
   describe('verifyEmail', () => {
+    beforeEach(async () => {
+      // Seed a first user so test users are not auto-verified admin
+      await service.register({ email: 'seed-verify@test.com', password: 'SeedP4ss!' });
+    });
+
     it('marks email as verified when token matches', async () => {
       const { id } = await service.register({
         email: 'bob@test.com',
@@ -224,6 +286,11 @@ describe('AuthService', () => {
   // ─── Login ──────────────────────────────────────────────────
 
   describe('login', () => {
+    beforeEach(async () => {
+      // Seed a first user so test users are not auto-verified admin
+      await service.register({ email: 'seed-login@test.com', password: 'SeedP4ss!' });
+    });
+
     it('returns tokens for verified user with correct password', async () => {
       const { id } = await service.register({
         email: 'carol@test.com',
@@ -298,6 +365,9 @@ describe('AuthService', () => {
     let userId: string;
 
     beforeEach(async () => {
+      // Seed a first user so fiona is not auto-verified admin
+      await service.register({ email: 'seed-2fa@test.com', password: 'SeedP4ss!' });
+
       const { id } = await service.register({
         email: 'fiona@test.com',
         password: 'StrongP4ss!',
@@ -358,6 +428,10 @@ describe('AuthService', () => {
   // ─── Token refresh ──────────────────────────────────────────
 
   describe('refreshToken', () => {
+    beforeEach(async () => {
+      await service.register({ email: 'seed-refresh@test.com', password: 'SeedP4ss!' });
+    });
+
     it('rotates tokens and invalidates old session', async () => {
       const { id } = await service.register({
         email: 'grace@test.com',
@@ -413,6 +487,10 @@ describe('AuthService', () => {
   // ─── Logout ─────────────────────────────────────────────────
 
   describe('logout', () => {
+    beforeEach(async () => {
+      await service.register({ email: 'seed-logout@test.com', password: 'SeedP4ss!' });
+    });
+
     it('deletes the session for the given refresh token', async () => {
       const { id } = await service.register({
         email: 'heidi@test.com',
@@ -441,6 +519,10 @@ describe('AuthService', () => {
   // ─── Password reset ─────────────────────────────────────────
 
   describe('forgotPassword', () => {
+    beforeEach(async () => {
+      await service.register({ email: 'seed-forgot@test.com', password: 'SeedP4ss!' });
+    });
+
     it('sends a reset link and returns generic message for existing user', async () => {
       const { id } = await service.register({
         email: 'ivan@test.com',
@@ -466,6 +548,10 @@ describe('AuthService', () => {
   });
 
   describe('resetPassword', () => {
+    beforeEach(async () => {
+      await service.register({ email: 'seed-reset@test.com', password: 'SeedP4ss!' });
+    });
+
     it('changes password and invalidates all sessions', async () => {
       const { id } = await service.register({
         email: 'judy@test.com',
@@ -515,65 +601,71 @@ describe('AuthService', () => {
 
   // ─── Full happy-path flow ───────────────────────────────────
 
-  it('completes a full register → verify → login → refresh → logout flow', async () => {
-    // 1. Register
-    const reg = await service.register({
-      email: 'zoe@test.com',
-      password: 'StrongP4ss!',
+  describe('full flow', () => {
+    beforeEach(async () => {
+      await service.register({ email: 'seed-flow@test.com', password: 'SeedP4ss!' });
     });
-    expect(reg.email).toBe('zoe@test.com');
 
-    // 2. Verify email
-    const user = store.users.get(reg.id)!;
-    await service.verifyEmail(user.emailVerifyToken);
+    it('completes a full register → verify → login → refresh → logout flow', async () => {
+      // 1. Register
+      const reg = await service.register({
+        email: 'zoe@test.com',
+        password: 'StrongP4ss!',
+      });
+      expect(reg.email).toBe('zoe@test.com');
 
-    // 3. Login
-    const loginResult = (await service.login({
-      email: 'zoe@test.com',
-      password: 'StrongP4ss!',
-    })) as { accessToken: string; refreshToken: string; expiresAt: Date };
-    expect(loginResult.accessToken).toBeDefined();
-    const oldRefresh = loginResult.refreshToken;
+      // 2. Verify email
+      const user = store.users.get(reg.id)!;
+      await service.verifyEmail(user.emailVerifyToken);
 
-    // 4. Refresh
-    const rotated = await service.refreshToken(oldRefresh);
-    expect(rotated.refreshToken).not.toBe(oldRefresh);
+      // 3. Login
+      const loginResult = (await service.login({
+        email: 'zoe@test.com',
+        password: 'StrongP4ss!',
+      })) as { accessToken: string; refreshToken: string; expiresAt: Date };
+      expect(loginResult.accessToken).toBeDefined();
+      const oldRefresh = loginResult.refreshToken;
 
-    // 5. Old refresh is now invalid
-    await expect(service.refreshToken(oldRefresh)).rejects.toThrow(
-      UnauthorizedException,
-    );
+      // 4. Refresh
+      const rotated = await service.refreshToken(oldRefresh);
+      expect(rotated.refreshToken).not.toBe(oldRefresh);
 
-    // 6. Logout with new refresh
-    await service.logout(rotated.refreshToken);
-    await expect(service.refreshToken(rotated.refreshToken)).rejects.toThrow(
-      UnauthorizedException,
-    );
-  });
+      // 5. Old refresh is now invalid
+      await expect(service.refreshToken(oldRefresh)).rejects.toThrow(
+        UnauthorizedException,
+      );
 
-  it('completes a full 2FA enable → login with requires2fa → verify2fa flow', async () => {
-    // 1. Register & verify
-    const reg = await service.register({
-      email: 'yuki@test.com',
-      password: 'StrongP4ss!',
+      // 6. Logout with new refresh
+      await service.logout(rotated.refreshToken);
+      await expect(service.refreshToken(rotated.refreshToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
-    const user = store.users.get(reg.id)!;
-    await service.verifyEmail(user.emailVerifyToken);
 
-    // 2. Generate & enable 2FA
-    const { secret } = await service.generate2faSecret(reg.id);
-    await service.enable2fa(reg.id, { token: secret });
+    it('completes a full 2FA enable → login with requires2fa → verify2fa flow', async () => {
+      // 1. Register & verify
+      const reg = await service.register({
+        email: 'yuki@test.com',
+        password: 'StrongP4ss!',
+      });
+      const user = store.users.get(reg.id)!;
+      await service.verifyEmail(user.emailVerifyToken);
 
-    // 3. Login — requires 2FA
-    const step1 = await service.login({
-      email: 'yuki@test.com',
-      password: 'StrongP4ss!',
+      // 2. Generate & enable 2FA
+      const { secret } = await service.generate2faSecret(reg.id);
+      await service.enable2fa(reg.id, { token: secret });
+
+      // 3. Login — requires 2FA
+      const step1 = await service.login({
+        email: 'yuki@test.com',
+        password: 'StrongP4ss!',
+      });
+      expect(step1).toEqual({ requires2fa: true, userId: reg.id });
+
+      // 4. Verify 2FA — get full tokens
+      const step2 = await service.verify2fa(reg.id, { token: 'any-valid' });
+      expect(step2).toHaveProperty('accessToken');
+      expect(step2).toHaveProperty('refreshToken');
     });
-    expect(step1).toEqual({ requires2fa: true, userId: reg.id });
-
-    // 4. Verify 2FA — get full tokens
-    const step2 = await service.verify2fa(reg.id, { token: 'any-valid' });
-    expect(step2).toHaveProperty('accessToken');
-    expect(step2).toHaveProperty('refreshToken');
   });
 });
