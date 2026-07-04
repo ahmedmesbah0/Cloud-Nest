@@ -104,6 +104,89 @@ export class CreateSnapshotDto {
   name!: string;
 }
 
+export class QemuHardwareDto {
+  @ApiPropertyOptional({ description: 'BIOS type: seabios|ovmf' })
+  @IsOptional()
+  @IsString()
+  bios?: string;
+
+  @ApiPropertyOptional({ description: 'Boot order (e.g. "order=ide2;virtio0;net0")' })
+  @IsOptional()
+  @IsString()
+  boot?: string;
+
+  @ApiPropertyOptional({ description: 'Machine type: pc|q35' })
+  @IsOptional()
+  @IsString()
+  machine?: string;
+
+  @ApiPropertyOptional({ description: 'CPU type: host|kvm64|x86-64-v2-AES' })
+  @IsOptional()
+  @IsString()
+  cpu?: string;
+
+  @ApiPropertyOptional({ description: 'CPU sockets' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sockets?: number;
+
+  @ApiPropertyOptional({ description: 'NUMA enabled' })
+  @IsOptional()
+  @IsString()
+  numa?: string;
+
+  @ApiPropertyOptional({ description: 'OS type: l26|other|win10|...' })
+  @IsOptional()
+  @IsString()
+  ostype?: string;
+
+  @ApiPropertyOptional({ description: 'QEMU agent enabled: 0|1' })
+  @IsOptional()
+  @IsString()
+  agent?: string;
+
+  @ApiPropertyOptional({ description: 'VGA type: std|virtio|serial0|qxl|...' })
+  @IsOptional()
+  @IsString()
+  vga?: string;
+
+  @ApiPropertyOptional({ description: 'USB tablet: 0|1' })
+  @IsOptional()
+  @IsString()
+  tablet?: string;
+
+  @ApiPropertyOptional({ description: 'Hotplug settings: disk|network|...' })
+  @IsOptional()
+  @IsString()
+  hotplug?: string;
+
+  @ApiPropertyOptional({ description: 'ACPI: 0|1' })
+  @IsOptional()
+  @IsString()
+  acpi?: string;
+
+  @ApiPropertyOptional({ description: 'KVM hardware virtualization: 0|1' })
+  @IsOptional()
+  @IsString()
+  kvm?: string;
+
+  @ApiPropertyOptional({ description: 'OVMF EFI disk configuration' })
+  @IsOptional()
+  @IsString()
+  efidisk0?: string;
+
+  @ApiPropertyOptional({ description: 'TPM state configuration' })
+  @IsOptional()
+  @IsString()
+  tpmstate0?: string;
+
+  @ApiPropertyOptional({ description: 'Custom args' })
+  @IsOptional()
+  @IsString()
+  args?: string;
+}
+
 export class VmResponseDto {
   @ApiProperty()
   id!: string;

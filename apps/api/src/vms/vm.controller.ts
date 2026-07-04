@@ -2,8 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
-
   Body,
   Param,
   Query,
@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VmService } from './vm.service';
-import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto } from './dto/vm.dto';
+import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto, QemuHardwareDto } from './dto/vm.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
@@ -184,6 +184,30 @@ export class VmController {
   async delete(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.vmService.deleteVm(userId, id);
   }
+
+  // --- QEMU Hardware Config ---
+
+  @Get(':id/hardware')
+  @ApiOperation({ summary: 'Get QEMU hardware configuration (BIOS, boot, CPU type, etc.)' })
+  async getHardware(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.getHardwareConfig(userId, id);
+  }
+
+  @Put(':id/hardware')
+  @ApiOperation({ summary: 'Update QEMU hardware configuration' })
+  async updateHardware(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: QemuHardwareDto,
+  ) {
+    const config: Record<string, unknown> = {};
+    for (const key of Object.keys(dto)) {
+      if ((dto as any)[key] !== undefined) config[key] = (dto as any)[key];
+    }
+    return this.vmService.updateHardwareConfig(userId, id, config);
+  }
+
+  // --- Firewall ---
 
   @Get(':id/firewall')
   @ApiOperation({ summary: 'List firewall rules' })

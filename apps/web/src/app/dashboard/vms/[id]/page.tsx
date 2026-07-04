@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { useState, useCallback } from 'react';
 import api from '@/lib/api';
-import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash } from 'lucide-react';
+import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -55,10 +55,14 @@ export default function VmDetailPage() {
   const [showResize, setShowResize] = useState(false);
   const [showReinstall, setShowReinstall] = useState(false);
   const [showIso, setShowIso] = useState(false);
+  const [showHardware, setShowHardware] = useState(false);
 
   const [resizeForm, setResizeForm] = useState({ cpuCores: 0, memoryMb: 0, diskGb: 0 });
   const [reinstallTemplateId, setReinstallTemplateId] = useState('');
   const [isoForm, setIsoForm] = useState({ iso: '', storage: 'local-lvm' });
+  const [hardwareForm, setHardwareForm] = useState<Record<string, any>>({});
+  const [savingHardware, setSavingHardware] = useState(false);
+  const [loadingHardware, setLoadingHardware] = useState(false);
 
   const [createBacking, setCreateBacking] = useState(false);
   const [creatingSnapshot, setCreatingSnapshot] = useState(false);
@@ -253,6 +257,39 @@ export default function VmDetailPage() {
     mutateMetrics();
   };
 
+  const handleSaveHardware = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingHardware(true);
+    try {
+      await api.put(`/vms/${vm.id}/hardware`, hardwareForm);
+      toast.success('Hardware config updated. Reboot the VM for changes to take effect.');
+      setShowHardware(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update hardware');
+    } finally {
+      setSavingHardware(false);
+    }
+  };
+
+  const hardwareFields = [
+    { key: 'bios', label: 'BIOS', placeholder: 'seabios / ovmf' },
+    { key: 'boot', label: 'Boot Order', placeholder: 'order=ide2;virtio0;net0' },
+    { key: 'machine', label: 'Machine Type', placeholder: 'pc / q35' },
+    { key: 'cpu', label: 'CPU Type', placeholder: 'host / kvm64 / x86-64-v2-AES' },
+    { key: 'sockets', label: 'CPU Sockets', type: 'number' },
+    { key: 'ostype', label: 'OS Type', placeholder: 'l26 / win10 / other' },
+    { key: 'agent', label: 'QEMU Agent', placeholder: '0 / 1' },
+    { key: 'vga', label: 'VGA Type', placeholder: 'std / virtio / qxl' },
+    { key: 'tablet', label: 'USB Tablet', placeholder: '0 / 1' },
+    { key: 'hotplug', label: 'Hotplug', placeholder: 'disk,network,usb' },
+    { key: 'acpi', label: 'ACPI', placeholder: '0 / 1' },
+    { key: 'kvm', label: 'KVM', placeholder: '0 / 1' },
+    { key: 'numa', label: 'NUMA', placeholder: '0 / 1' },
+    { key: 'efidisk0', label: 'EFI Disk', placeholder: 'local:1,efitype=4m,pre-enrolled-keys=1' },
+    { key: 'tpmstate0', label: 'TPM State', placeholder: 'local:1,version=v2.0' },
+    { key: 'args', label: 'Custom Args', placeholder: '-device ...' },
+  ];
+
   const actions = [];
   if (vm.status === 'stopped') actions.push({ label: 'Start', action: 'start', icon: Play, color: 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20' });
   if (vm.status === 'running') {
@@ -339,6 +376,21 @@ export default function VmDetailPage() {
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
             >
               <Maximize2 className="h-4 w-4" /> Resize
+            </button>
+            <button
+              onClick={async () => {
+                setLoadingHardware(true);
+                setShowHardware(true);
+                try {
+                  const res = await api.get(`/vms/${vm.id}/hardware`);
+                  setHardwareForm(res.data);
+                } catch { setHardwareForm({}); }
+                setLoadingHardware(false);
+              }}
+              disabled={isProvisioning}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+            >
+              <Cpu className="h-4 w-4" /> Hardware
             </button>
             <button
               onClick={() => setShowReinstall(true)}
@@ -647,6 +699,38 @@ export default function VmDetailPage() {
                 <button type="submit" disabled={actionVm} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Mount ISO</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Hardware Config Modal */}
+      {showHardware && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">QEMU Hardware Configuration</h3>
+            {loadingHardware ? (
+              <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-400 border-t-transparent rounded-full" /></div>
+            ) : (
+              <form onSubmit={handleSaveHardware} className="space-y-4">
+                <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">Changes apply after VM reboot. The VM must be stopped to save.</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {hardwareFields.map(({ key, label, placeholder, type }) => (
+                    <div key={key}>
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{label}</label>
+                      {type === 'number' ? (
+                        <input type="number" value={hardwareForm[key] ?? ''} onChange={(e) => setHardwareForm({ ...hardwareForm, [key]: e.target.value ? parseInt(e.target.value) : '' })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" min={1} />
+                      ) : (
+                        <input type="text" value={hardwareForm[key] ?? ''} onChange={(e) => setHardwareForm({ ...hardwareForm, [key]: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder={placeholder} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <button type="button" onClick={() => setShowHardware(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Cancel</button>
+                  <button type="submit" disabled={savingHardware} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">{savingHardware ? 'Saving...' : 'Save'}</button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

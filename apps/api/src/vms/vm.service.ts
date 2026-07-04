@@ -475,6 +475,53 @@ export class VmService {
     return { message: 'Migration queued' };
   }
 
+  async getHardwareConfig(userId: string, vmId: string): Promise<Record<string, unknown>> {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    const config = await this.proxmox.getVmConfig(node.proxmoxNodeId, vm.proxmoxId);
+    const hardwareKeys = ['bios', 'boot', 'machine', 'cpu', 'sockets', 'numa', 'ostype', 'agent', 'vga', 'tablet', 'hotplug', 'acpi', 'kvm', 'efidisk0', 'tpmstate0', 'args', 'cores', 'memory'];
+    const result: Record<string, unknown> = {};
+    for (const key of hardwareKeys) {
+      if (config[key] !== undefined) result[key] = config[key];
+    }
+    return result;
+  }
+
+  async updateHardwareConfig(userId: string, vmId: string, dto: Record<string, any>): Promise<{ message: string }> {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+    if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change hardware config');
+
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+
+    const allowedKeys = ['bios', 'boot', 'machine', 'cpu', 'sockets', 'numa', 'ostype', 'agent', 'vga', 'tablet', 'hotplug', 'acpi', 'kvm', 'efidisk0', 'tpmstate0', 'args'];
+    const config: Record<string, unknown> = {};
+    for (const key of allowedKeys) {
+      if (dto[key] !== undefined) config[key] = dto[key];
+    }
+
+    if (Object.keys(config).length === 0) {
+      throw new BadRequestException('No valid hardware settings provided');
+    }
+
+    await this.proxmox.updateVmConfig(vm.proxmoxId, config, node.proxmoxNodeId);
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'vm.hardware.update',
+        resource: 'vm',
+        resourceId: vmId,
+        metadata: { config } as any,
+      },
+    });
+
+    return { message: 'Hardware configuration updated. Reboot the VM for changes to take effect.' };
+  }
+
   async getVncUrl(userId: string, vmId: string): Promise<{ host: string; port: string; ticket: string; cert: string }> {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
