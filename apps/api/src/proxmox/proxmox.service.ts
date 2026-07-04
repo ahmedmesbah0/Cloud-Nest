@@ -453,4 +453,12 @@ export class ProxmoxService implements OnModuleInit {
     };
     return this.post<string>(`/nodes/${node}/qemu/${vmid}/config`, body);
   }
+
+  async rollbackSnapshot(
+    vmid: number,
+    snapname: string,
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/snapshot/${snapname}/rollback`);
+  }
 }

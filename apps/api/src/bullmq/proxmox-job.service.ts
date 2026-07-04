@@ -21,7 +21,8 @@ export type ProxmoxJobType =
   | 'reinstall-vm'
   | 'mount-iso'
   | 'eject-iso'
-  | 'migrate-vm';
+  | 'migrate-vm'
+  | 'rollback-snapshot';
 
 export interface ProxmoxJobData {
   type: ProxmoxJobType;

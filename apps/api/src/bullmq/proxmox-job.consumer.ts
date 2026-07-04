@@ -330,6 +330,17 @@ export class ProxmoxJobConsumer extends WorkerHost {
         );
       }
 
+      case 'rollback-snapshot': {
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
+        await this.proxmox.stopVm(payload.vmid as number, node);
+        const result = await this.proxmox.rollbackSnapshot(
+          payload.vmid as number,
+          payload.name as string,
+          node,
+        );
+        return result;
+      }
+
       default:
         throw new Error(`Unknown proxmox job type: ${type}`);
     }

@@ -392,16 +392,17 @@ model OperatingSystem {
 }
 
 model Snapshot {
-  id         String         @id @default(cuid())
-  vmId       String
-  name       String
-  status     SnapshotStatus @default(pending)
-  proxmoxId  String?
-  nodeId     String?
-  createdAt  DateTime       @default(now())
+  id          String         @id @default(cuid())
+  vmId        String
+  name        String
+  description String?
+  status      SnapshotStatus @default(pending)
+  proxmoxId   String?
+  nodeId      String?
+  createdAt   DateTime       @default(now())
 
-  vm         Vm             @relation(fields: [vmId], references: [id])
-  node       Node?          @relation(fields: [nodeId], references: [id])
+  vm          Vm             @relation(fields: [vmId], references: [id])
+  node        Node?          @relation(fields: [nodeId], references: [id])
 }
 
 model Backup {

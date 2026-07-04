@@ -192,14 +192,14 @@ export class VmController {
   }
 
   @Post(':id/snapshots')
-  @HttpCode(HttpStatus.ACCEPTED)
+  @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a snapshot' })
   async createSnapshot(
     @CurrentUser('id') userId: string,
     @Param('id') id: string,
     @Body() dto: CreateSnapshotDto,
   ) {
-    return this.vmService.createSnapshot(userId, id, dto.name);
+    return this.vmService.createSnapshot(userId, id, dto.name, dto.description);
   }
 
   @Delete(':id/snapshots/:snapshotId')

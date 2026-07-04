@@ -102,6 +102,12 @@ export class CreateSnapshotDto {
   @IsString()
   @MaxLength(128)
   name!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  description?: string;
 }
 
 export class QemuHardwareDto {

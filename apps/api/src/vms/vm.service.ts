@@ -408,7 +408,7 @@ export class VmService {
     });
   }
 
-  async createSnapshot(userId: string, vmId: string, name: string) {
+  async createSnapshot(userId: string, vmId: string, name: string, description?: string) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
 
@@ -416,6 +416,7 @@ export class VmService {
       data: {
         vmId: vm.id,
         name,
+        description,
         status: 'pending',
         nodeId: vm.nodeId,
       },
