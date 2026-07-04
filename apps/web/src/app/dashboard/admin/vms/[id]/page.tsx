@@ -37,11 +37,16 @@ export default function AdminVmDetailPage() {
   const [saving, setSaving] = useState(false);
   const [powering, setPowering] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('info');
+  const [showReinstall, setShowReinstall] = useState(false);
+  const [reinstallTemplate, setReinstallTemplate] = useState('');
+  const [reinstalling, setReinstalling] = useState(false);
 
   const { data: firewall, mutate: mutateFirewall } = useSWR(
     () => params.id ? `/admin/vms/${params.id}/firewall` : null,
     fetcher,
   );
+
+  const { data: templates } = useSWR('/admin/templates', fetcher);
 
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +74,23 @@ export default function AdminVmDetailPage() {
       toast.error(err.response?.data?.message || `Failed to ${action}`);
     } finally {
       setPowering(null);
+    }
+  };
+
+  const handleReinstall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reinstallTemplate) return;
+    setReinstalling(true);
+    try {
+      await api.post(`/admin/vms/${params.id}/reinstall`, { templateId: reinstallTemplate });
+      toast.success('Reinstall queued');
+      setShowReinstall(false);
+      setReinstallTemplate('');
+      setTimeout(() => mutate(), 2000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Reinstall failed');
+    } finally {
+      setReinstalling(false);
     }
   };
 
@@ -152,6 +174,7 @@ export default function AdminVmDetailPage() {
           {canStart && <button onClick={() => handlePowerAction('start')} disabled={powering === 'start'} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"><Play className="h-4 w-4" /> {powering === 'start' ? '...' : 'Start'}</button>}
           {canStop && <button onClick={() => handlePowerAction('stop')} disabled={powering === 'stop'} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"><SquareStop className="h-4 w-4" /> {powering === 'stop' ? '...' : 'Stop'}</button>}
           {canRestart && <button onClick={() => handlePowerAction('restart')} disabled={powering === 'restart'} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"><RotateCcw className="h-4 w-4" /> {powering === 'restart' ? '...' : 'Restart'}</button>}
+          {vm?.status === 'stopped' && <button onClick={() => { setReinstallTemplate(''); setShowReinstall(true); }} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 hover:bg-slate-50">Reinstall</button>}
           <button onClick={handleForceStop} className="px-3 py-2 text-sm rounded-lg border border-amber-200 dark:border-amber-800 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20">Force Stop</button>
           <button onClick={handleForceDelete} className="px-3 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white">Force Delete</button>
         </div>
@@ -322,6 +345,27 @@ export default function AdminVmDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Reinstall Modal */}
+      {showReinstall && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowReinstall(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Reinstall OS</h2>
+            <form onSubmit={handleReinstall}>
+              <select value={reinstallTemplate} onChange={e => setReinstallTemplate(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white mb-4" required>
+                <option value="">Select a template...</option>
+                {(templates?.templates || []).map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.name} ({t.osType})</option>
+                ))}
+              </select>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setShowReinstall(false)} className="px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600">Cancel</button>
+                <button type="submit" disabled={reinstalling || !reinstallTemplate} className="px-3 py-2 text-sm rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50">{reinstalling ? 'Reinstalling...' : 'Reinstall'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

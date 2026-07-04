@@ -7,6 +7,7 @@ import { AdminService } from './admin.service';
 import {
   PaginationQueryDto, UpdateUserDto, CreditWalletDto,
   CreateNodeDto, UpdateNodeDto, SetSettingDto,
+  CreateRoleDto, UpdateRoleDto, AddPermissionDto, AdminReplyTicketDto,
 } from './dto/admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from './admin.guard';
@@ -199,6 +200,80 @@ export class AdminController {
     return this.adminService.listRoles();
   }
 
+  @Post('roles')
+  @ApiOperation({ summary: 'Create a role' })
+  async createRole(@CurrentUser('id') adminUserId: string, @Body() dto: CreateRoleDto) {
+    return this.adminService.createRole(adminUserId, dto);
+  }
+
+  @Get('roles/:id')
+  @ApiOperation({ summary: 'Get role details' })
+  async getRole(@Param('id') id: string) {
+    return this.adminService.getRole(id);
+  }
+
+  @Put('roles/:id')
+  @ApiOperation({ summary: 'Update a role' })
+  async updateRole(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    return this.adminService.updateRole(adminUserId, id, dto);
+  }
+
+  @Delete('roles/:id')
+  @ApiOperation({ summary: 'Delete a role' })
+  async deleteRole(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.deleteRole(adminUserId, id);
+  }
+
+  @Post('roles/:id/permissions')
+  @ApiOperation({ summary: 'Add permission to role' })
+  async addRolePermission(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: AddPermissionDto) {
+    return this.adminService.addRolePermission(adminUserId, id, dto.permissionId);
+  }
+
+  @Delete('roles/:id/permissions/:permissionId')
+  @ApiOperation({ summary: 'Remove permission from role' })
+  async removeRolePermission(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Param('permissionId') permissionId: string) {
+    return this.adminService.removeRolePermission(adminUserId, id, permissionId);
+  }
+
+  @Get('permissions')
+  @ApiOperation({ summary: 'List all available permissions' })
+  async listPermissions() {
+    return this.adminService.listPermissions();
+  }
+
+  @Get('support-tickets')
+  @ApiOperation({ summary: 'List all support tickets (admin)' })
+  async adminListTickets(@Query('status') status?: string) {
+    return this.adminService.adminListTickets(status);
+  }
+
+  @Get('support-tickets/:id')
+  @ApiOperation({ summary: 'Get support ticket details (admin)' })
+  async adminGetTicket(@Param('id') id: string) {
+    return this.adminService.adminGetTicket(id);
+  }
+
+  @Post('support-tickets/:id/reply')
+  @ApiOperation({ summary: 'Reply to support ticket (admin)' })
+  async adminReplyTicket(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: AdminReplyTicketDto) {
+    return this.adminService.adminReplyTicket(adminUserId, id, dto.message);
+  }
+
+  @Post('support-tickets/:id/close')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Close support ticket' })
+  async adminCloseTicket(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.adminCloseTicket(adminUserId, id);
+  }
+
+  @Post('support-tickets/:id/reopen')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reopen support ticket' })
+  async adminReopenTicket(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {
+    return this.adminService.adminReopenTicket(adminUserId, id);
+  }
+
   @Get('templates')
   @ApiOperation({ summary: 'List VM templates' })
   async listTemplates(@Query() query: PaginationQueryDto) {
@@ -275,5 +350,12 @@ export class AdminController {
   @ApiOperation({ summary: 'Delete VM firewall rule (admin)' })
   async deleteVmFirewall(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Param('pos') pos: number) {
     return this.adminService.deleteVmFirewall(adminUserId, id, pos);
+  }
+
+  @Post('vms/:id/reinstall')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reinstall OS on VM (admin)' })
+  async adminReinstallVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body('templateId') templateId: string) {
+    return this.adminService.adminReinstallVm(adminUserId, id, templateId);
   }
 }

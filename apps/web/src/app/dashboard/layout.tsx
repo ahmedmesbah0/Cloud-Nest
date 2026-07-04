@@ -7,7 +7,7 @@ import { useTheme } from 'next-themes';
 import {
   Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
   LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Key, Terminal, Shield,
-  Users, Settings, FileText, UserCheck, HardDrive, Bell, Globe, Gift, BarChart3,
+  Users, Settings, FileText, UserCheck, HardDrive, Bell, Globe, Gift, BarChart3, MessageSquare,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -36,6 +36,7 @@ const adminNavItems = [
   { href: '/dashboard/admin/audit-logs', label: 'Audit Logs', icon: FileText },
   { href: '/dashboard/admin/roles', label: 'Roles', icon: UserCheck },
   { href: '/dashboard/admin/metrics', label: 'Metrics', icon: BarChart3 },
+  { href: '/dashboard/admin/support-tickets', label: 'Support', icon: MessageSquare },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

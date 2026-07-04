@@ -586,4 +586,171 @@ export class AdminService {
     });
     return this.proxmoxService.deleteFirewallRule(vm.nodeId, vm.proxmoxId, pos);
   }
+
+  async adminReinstallVm(adminUserId: string, vmId: string, templateId: string) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+    const template = await this.prisma.vmTemplate.findUnique({ where: { id: templateId } });
+    if (!template) throw new BadRequestException('Template not found');
+
+    await this.prisma.vm.update({
+      where: { id: vmId },
+      data: { status: 'provisioning' },
+    });
+
+    await this.jobService.enqueueJob('reinstall-vm', {
+      vmId,
+      proxmoxId: vm.proxmoxId,
+      templateVmid: Number(template.proxmoxTemplateId),
+    }, {
+      userId: adminUserId,
+      auditLog: { action: 'admin.vm.reinstall', resource: 'vm', resourceId: vmId },
+    });
+
+    return { message: 'Reinstall queued' };
+  }
+
+  // --- Roles CRUD ---
+
+  async createRole(adminUserId: string, data: { name: string; description?: string }) {
+    const existing = await this.prisma.role.findUnique({ where: { name: data.name } });
+    if (existing) throw new BadRequestException('Role already exists');
+    const role = await this.prisma.role.create({ data: { name: data.name, description: data.description } });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.role.create', resource: 'role', resourceId: role.id, metadata: data as any },
+    });
+    return role;
+  }
+
+  async updateRole(adminUserId: string, roleId: string, data: { name?: string; description?: string }) {
+    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    if (data.name && data.name !== role.name) {
+      const existing = await this.prisma.role.findUnique({ where: { name: data.name } });
+      if (existing) throw new BadRequestException('Role name already taken');
+    }
+    const updated = await this.prisma.role.update({ where: { id: roleId }, data });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.role.update', resource: 'role', resourceId: roleId, metadata: data as any },
+    });
+    return updated;
+  }
+
+  async deleteRole(adminUserId: string, roleId: string) {
+    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    if (role.name === 'admin') throw new BadRequestException('Cannot delete the admin role');
+    await this.prisma.role.delete({ where: { id: roleId } });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.role.delete', resource: 'role', resourceId: roleId },
+    });
+    return { message: 'Role deleted' };
+  }
+
+  async getRole(roleId: string) {
+    const role = await this.prisma.role.findUnique({
+      where: { id: roleId },
+      include: { permissions: { include: { permission: true } }, _count: { select: { users: true } } },
+    });
+    if (!role) throw new NotFoundException('Role not found');
+    return role;
+  }
+
+  async listPermissions() {
+    return this.prisma.permission.findMany({ orderBy: [{ resource: 'asc' }, { action: 'asc' }] });
+  }
+
+  async addRolePermission(adminUserId: string, roleId: string, permissionId: string) {
+    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    const perm = await this.prisma.permission.findUnique({ where: { id: permissionId } });
+    if (!perm) throw new NotFoundException('Permission not found');
+    await this.prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId, permissionId } },
+      create: { roleId, permissionId },
+      update: {},
+    });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.role.add-permission', resource: 'role', resourceId: roleId, metadata: { permissionId } as any },
+    });
+    return { message: 'Permission added to role' };
+  }
+
+  async removeRolePermission(adminUserId: string, roleId: string, permissionId: string) {
+    const rp = await this.prisma.rolePermission.findUnique({
+      where: { roleId_permissionId: { roleId, permissionId } },
+    });
+    if (!rp) throw new NotFoundException('Permission not assigned to role');
+    await this.prisma.rolePermission.delete({ where: { id: rp.id } });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.role.remove-permission', resource: 'role', resourceId: roleId, metadata: { permissionId } as any },
+    });
+    return { message: 'Permission removed from role' };
+  }
+
+  // --- Support Tickets (admin) ---
+
+  async adminListTickets(status?: string) {
+    const where: any = {};
+    if (status) where.status = status;
+    return this.prisma.supportTicket.findMany({
+      where,
+      include: { user: { select: { id: true, name: true, email: true } }, _count: { select: { messages: true } } },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  async adminGetTicket(ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        messages: {
+          include: { user: { select: { id: true, name: true, email: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    return ticket;
+  }
+
+  async adminReplyTicket(adminUserId: string, ticketId: string, body: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.status === 'closed') throw new BadRequestException('Ticket is closed');
+    const msg = await this.prisma.supportTicketMessage.create({
+      data: { ticketId, userId: adminUserId, body },
+    });
+    await this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { status: 'open', updatedAt: new Date() },
+    });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.ticket.reply', resource: 'support-ticket', resourceId: ticketId },
+    });
+    return msg;
+  }
+
+  async adminCloseTicket(adminUserId: string, ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.status === 'closed') throw new BadRequestException('Ticket is already closed');
+    await this.prisma.supportTicket.update({ where: { id: ticketId }, data: { status: 'closed', updatedAt: new Date() } });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.ticket.close', resource: 'support-ticket', resourceId: ticketId },
+    });
+    return { message: 'Ticket closed' };
+  }
+
+  async adminReopenTicket(adminUserId: string, ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.status !== 'closed') throw new BadRequestException('Ticket is not closed');
+    await this.prisma.supportTicket.update({ where: { id: ticketId }, data: { status: 'open', updatedAt: new Date() } });
+    await this.prisma.auditLog.create({
+      data: { userId: adminUserId, action: 'admin.ticket.reopen', resource: 'support-ticket', resourceId: ticketId },
+    });
+    return { message: 'Ticket reopened' };
+  }
 }

@@ -85,3 +85,38 @@ export class SetSettingDto {
   @IsString()
   value!: string;
 }
+
+export class CreateRoleDto {
+  @ApiProperty()
+  @IsString()
+  name!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+export class UpdateRoleDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+export class AddPermissionDto {
+  @ApiProperty()
+  @IsString()
+  permissionId!: string;
+}
+
+export class AdminReplyTicketDto {
+  @ApiProperty()
+  @IsString()
+  message!: string;
+}
