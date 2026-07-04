@@ -61,6 +61,12 @@ export class AuthRepository {
     return this.db(tx).role.upsert({ where, create, update });
   }
 
+  async findAdminRole(userId: string, tx?: PrismaTx) {
+    return this.db(tx).userRole.findFirst({
+      where: { userId, role: { name: 'admin' } },
+    });
+  }
+
   async createUserRole(data: { userId: string; roleId: string }, tx?: PrismaTx) {
     return this.db(tx).userRole.create({ data });
   }
