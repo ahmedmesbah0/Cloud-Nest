@@ -397,15 +397,6 @@ write_env_file() {
     : > "$env_file"
   fi
 
-  local api_port="${API_PORT:-3000}"
-  local web_port="${WEB_PORT:-3001}"
-  api_port="$(find_available_port "$api_port")"
-  web_port="$(find_available_port "$web_port")"
-  API_PORT="$api_port"
-  WEB_PORT="$web_port"
-
-  PUBLIC_HOST="$(get_public_host)"
-
   # DB_PASSWORD was already set by ensure_postgres() to a fixed value;
   # do NOT regenerate it here or .env will diverge from the DB.
   : "${DB_PASSWORD:=CloudNest2026Secure}"
@@ -670,6 +661,9 @@ perform_install() {
   : "${ADMIN_PASSWORD:=admin123}"
   : "${JWT_ACCESS_SECRET:=$(openssl rand -hex 48)}"
   : "${JWT_REFRESH_SECRET:=$(openssl rand -hex 48)}"
+  : "${API_PORT:=$(find_available_port 3000)}"
+  : "${WEB_PORT:=$(find_available_port 3001)}"
+  PUBLIC_HOST="$(get_public_host)"
 
   install_dependencies
   setup_prisma
