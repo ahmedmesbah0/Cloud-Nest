@@ -482,15 +482,7 @@ setup_prisma() {
   log_section "Configuring Prisma"
   cd "$INSTALL_DIR"
 
-  # Re-export DATABASE_URL from .env so prisma.config.ts (which calls env("DATABASE_URL"))
-  # definitely sees the correct value with the detected port.
-  set -a
-  # shellcheck source=/dev/null
-  . "$INSTALL_DIR/.env"
-  set +a
-
   info "Prisma will use DATABASE_URL=postgresql://${DB_USER}:****@${DB_HOST}:${DB_PORT}/${DB_NAME}"
-  # Belt-and-suspenders: force-export in case .env sourcing was skipped/overridden
   export DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
 
   run_with_retry 3 10 npm run prisma:generate
@@ -532,16 +524,14 @@ build_project() {
 write_pm2_config() {
   log_section "Configuring process manager"
   cd "$INSTALL_DIR"
-  local env_file="$INSTALL_DIR/.env"
 
-  # Read the final env values directly from the file (stripping surrounding quotes)
   local _db_url _redis_url _jwt_access _jwt_refresh _api_url _cors_origin
-  _db_url="$(grep -E '^DATABASE_URL=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
-  _redis_url="$(grep -E '^REDIS_URL=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
-  _jwt_access="$(grep -E '^JWT_ACCESS_SECRET=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
-  _jwt_refresh="$(grep -E '^JWT_REFRESH_SECRET=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
-  _api_url="$(grep -E '^NEXT_PUBLIC_API_URL=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
-  _cors_origin="$(grep -E '^CORS_ORIGIN=' "$env_file" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+  _db_url="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
+  _redis_url="${REDIS_URL:-redis://localhost:6379}"
+  _jwt_access="${JWT_ACCESS_SECRET}"
+  _jwt_refresh="${JWT_REFRESH_SECRET}"
+  _api_url="http://${PUBLIC_HOST}:${API_PORT}"
+  _cors_origin="http://${PUBLIC_HOST}:${WEB_PORT}"
 
   cat > "$INSTALL_DIR/ecosystem.config.cjs" <<EOF
 module.exports = {
@@ -686,7 +676,6 @@ perform_install() {
   ensure_postgres
   ensure_redis
   clone_or_update_repo
-  write_env_file
   install_dependencies
   setup_prisma
   seed_admin_account
@@ -694,6 +683,7 @@ perform_install() {
   write_pm2_config
   start_services
   run_health_checks
+  write_env_file
   print_summary
 }
 
