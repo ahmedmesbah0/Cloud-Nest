@@ -345,10 +345,16 @@ write_env_file() {
   local env_file="$INSTALL_DIR/.env"
   local env_example="$INSTALL_DIR/.env.example"
 
+  # ALWAYS regenerate .env from scratch to avoid stale values from previous runs.
+  # Back up the old one if it exists.
   if [ -f "$env_file" ]; then
-    info "Using existing .env file"
-  else
+    cp "$env_file" "${env_file}.backup.$(date +%s)"
+    info "Backed up existing .env"
+  fi
+  if [ -f "$env_example" ]; then
     cp "$env_example" "$env_file"
+  else
+    : > "$env_file"
   fi
 
   local api_port="${API_PORT:-3000}"
@@ -361,7 +367,7 @@ write_env_file() {
   PUBLIC_HOST="$(get_public_host)"
 
   if [ -z "${ADMIN_EMAIL:-}" ]; then
-    ADMIN_EMAIL="${ADMIN_EMAIL:-admin-$(openssl rand -hex 4)@cloudnest.local}"
+    ADMIN_EMAIL="admin-$(openssl rand -hex 4)@cloudnest.local"
   fi
   if [ -z "${ADMIN_PASSWORD:-}" ]; then
     ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9!@#$%^&*' | head -c 24)"
@@ -375,46 +381,47 @@ write_env_file() {
   if [ -z "${DB_PASSWORD:-}" ]; then
     DB_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
   fi
-  if [ -z "${REDIS_PASSWORD:-}" ]; then
-    REDIS_PASSWORD=""
-  fi
 
-  if [ -z "${DB_HOST:-}" ]; then DB_HOST="localhost"; fi
-  if [ -z "${DB_PORT:-}" ]; then DB_PORT="5432"; fi
-  if [ -z "${DB_NAME:-}" ]; then DB_NAME="cloudnest"; fi
-  if [ -z "${DB_USER:-}" ]; then DB_USER="cloudnest"; fi
+  : "${DB_HOST:=localhost}"
+  : "${DB_NAME:=cloudnest}"
+  : "${DB_USER:=cloudnest}"
+  # DB_PORT was set by ensure_postgres; default to 5432 if somehow unset
+  : "${DB_PORT:=5432}"
 
-  ensure_env_value "$env_file" "NODE_ENV" "production"
-  ensure_env_value "$env_file" "PORT" "$API_PORT"
-  ensure_env_value "$env_file" "NEXT_PUBLIC_API_URL" "http://${PUBLIC_HOST}:${API_PORT}"
-  # DATABASE_URL must always reflect the database the installer just provisioned
-  # (correct port + generated password), so force-overwrite it on every run.
-  set_env_value "$env_file" "DATABASE_URL" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
-  set_env_value "$env_file" "REDIS_URL" "redis://localhost:6379"
-  ensure_env_value "$env_file" "JWT_ACCESS_SECRET" "$JWT_ACCESS_SECRET"
-  ensure_env_value "$env_file" "JWT_REFRESH_SECRET" "$JWT_REFRESH_SECRET"
-  ensure_env_value "$env_file" "JWT_ACCESS_EXPIRY" "15m"
-  ensure_env_value "$env_file" "JWT_REFRESH_EXPIRY" "7d"
-  ensure_env_value "$env_file" "CORS_ORIGIN" "http://${PUBLIC_HOST}:${WEB_PORT}"
-  ensure_env_value "$env_file" "SMTP_HOST" ""
-  ensure_env_value "$env_file" "SMTP_PORT" "587"
-  ensure_env_value "$env_file" "SMTP_USER" ""
-  ensure_env_value "$env_file" "SMTP_PASS" ""
-  ensure_env_value "$env_file" "SMTP_FROM" "noreply@cloudnest.io"
-  ensure_env_value "$env_file" "THROTTLE_TTL" "60"
-  ensure_env_value "$env_file" "THROTTLE_LIMIT" "60"
+  # Write the complete .env file in one shot — no stale values can survive.
+  cat > "$env_file" <<EOF
+NODE_ENV=production
+PORT=${API_PORT}
+NEXT_PUBLIC_API_URL=http://${PUBLIC_HOST}:${API_PORT}
+DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public
+REDIS_URL=redis://localhost:6379
+JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
+JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=7d
+CORS_ORIGIN=http://${PUBLIC_HOST}:${WEB_PORT}
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=noreply@cloudnest.io
+TOTP_ISSUER=CloudNest
+THROTTLE_TTL=60
+THROTTLE_LIMIT=60
+PROXMOX_HOST=
+PROXMOX_API_TOKEN_ID=
+PROXMOX_API_TOKEN_SECRET=
+PROXMOX_NODE=
+PROXMOX_STORAGE=
+EOF
 
-  # Load .env into the current shell in a safe, quote-aware way
+  info "DATABASE_URL written: postgresql://${DB_USER}:****@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+
+  # Load .env into the current shell so child processes inherit correct values
   set -a
   # shellcheck source=/dev/null
   . "$env_file"
   set +a
-
-  # Refresh the values that the script tracks with the loaded .env
-  API_PORT="${PORT:-$API_PORT}"
-  ADMIN_EMAIL="${ADMIN_EMAIL:-$ADMIN_EMAIL}"
-  ADMIN_PASSWORD="${ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
-  PUBLIC_HOST="${PUBLIC_HOST:-$PUBLIC_HOST}"
 }
 
 install_dependencies() {
@@ -429,12 +436,16 @@ setup_prisma() {
   log_section "Configuring Prisma"
   cd "$INSTALL_DIR"
 
-  # Ensure DATABASE_URL is exported into the environment for child processes
-  # (prisma.config.ts reads it via env()). Reload from the freshly-written .env.
+  # Re-export DATABASE_URL from .env so prisma.config.ts (which calls env("DATABASE_URL"))
+  # definitely sees the correct value with the detected port.
   set -a
   # shellcheck source=/dev/null
   . "$INSTALL_DIR/.env"
   set +a
+
+  info "Prisma will use DATABASE_URL=postgresql://${DB_USER}:****@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+  # Belt-and-suspenders: force-export in case .env sourcing was skipped/overridden
+  export DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
 
   run_with_retry 3 10 npm run prisma:generate
 
