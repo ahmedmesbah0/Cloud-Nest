@@ -7,7 +7,7 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
-import { Throttle, seconds } from '@nestjs/throttler';
+import { Throttle, SkipThrottle, seconds } from '@nestjs/throttler';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -48,6 +48,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @SkipThrottle()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
