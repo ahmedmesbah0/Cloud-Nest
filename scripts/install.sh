@@ -705,9 +705,10 @@ perform_update() {
   fi
   cd "$INSTALL_DIR"
   info "Fetching latest from origin/$INSTALL_BRANCH"
-  git fetch origin "$INSTALL_BRANCH" >/dev/null 2>&1 || true
-  git checkout "$INSTALL_BRANCH" >/dev/null 2>&1 || true
-  git pull --ff-only origin "$INSTALL_BRANCH" || true
+  git fetch --prune origin "$INSTALL_BRANCH"
+  git checkout -B "$INSTALL_BRANCH" "origin/$INSTALL_BRANCH" >/dev/null 2>&1
+  git reset --hard "origin/$INSTALL_BRANCH" >/dev/null 2>&1
+  git clean -fd >/dev/null 2>&1
   info "Installing dependencies and rebuilding"
   npm install --no-fund --no-audit || true
   npm run build || true
