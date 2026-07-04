@@ -17,10 +17,11 @@ describe('VmService', () => {
     auditLogs: new Map<string, any>(),
     pools: new Map<string, any>(),
     templates: new Map<string, any>(),
+    otherUsage: { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 },
   };
 
   const addPool = (data: any) => {
-    const pool = { id: `pool-${store.pools.size + 1}`, userId: 'user-1', totalCores: 8, totalMemoryMb: 16384, totalDiskGb: 200, totalIps: 5, createdAt: new Date(), updatedAt: new Date(), ...data };
+    const pool = { id: `pool-${store.pools.size + 1}`, userId: 'user-1', totalCores: 8, totalMemoryMb: 16384, totalDiskGb: 200, totalIps: 5, backupEnabled: false, createdAt: new Date(), updatedAt: new Date(), ...data };
     store.pools.set(pool.id, pool);
     return pool;
   };
@@ -47,17 +48,8 @@ describe('VmService', () => {
       allocateResources: jest.fn().mockResolvedValue({ success: true, message: 'allocated' }),
     };
 
-    mockPrisma = {
+    const mockTx = {
       vm: {
-        findUnique: jest.fn(({ where }: any) => {
-          return store.vms.get(where.id) ?? null;
-        }),
-        findMany: jest.fn(({ where, orderBy }: any) => {
-          let vms = Array.from(store.vms.values());
-          if (where?.userId) vms = vms.filter((v: any) => v.userId === where.userId);
-          if (orderBy?.createdAt === 'desc') vms.reverse();
-          return vms;
-        }),
         create: jest.fn(({ data }: any) => {
           const vm = { id: `vm-${store.vms.size + 1}`, status: 'provisioning', proxmoxId: null, nodeId: null, createdAt: new Date(), updatedAt: new Date(), ...data };
           store.vms.set(vm.id, vm);
@@ -70,28 +62,7 @@ describe('VmService', () => {
           return vm;
         }),
       },
-      resourcePool: {
-        findUnique: jest.fn(({ where }: any) => {
-          return store.pools.get(where.id) ?? null;
-        }),
-        findFirst: jest.fn(({ where, include }: any) => {
-          let pool: any = undefined;
-          for (const p of store.pools.values()) {
-            if ((p as any).userId === where.userId) { pool = p; break; }
-          }
-          if (pool && include?.allocations) {
-            return { ...pool, allocations: Array.from(store.allocations.values()).filter((a: any) => a.poolId === pool.id) };
-          }
-          return pool ?? null;
-        }),
-      },
       resourceAllocation: {
-        findUnique: jest.fn(({ where }: any) => {
-          for (const alloc of store.allocations.values()) {
-            if ((alloc as any).vmId === where.vmId) return alloc;
-          }
-          return null;
-        }),
         update: jest.fn(({ where, data }: any) => {
           for (const [, alloc] of store.allocations) {
             if ((alloc as any).vmId === where.vmId) {
@@ -100,6 +71,55 @@ describe('VmService', () => {
             }
           }
           throw new Error('Allocation not found');
+        }),
+      },
+      $queryRawUnsafe: jest.fn((sql: string, ...params: any[]) => {
+        if (sql.includes('FOR UPDATE')) {
+          let poolId = 'pool-1';
+          for (const p of store.pools.values()) {
+            poolId = p.id;
+            break;
+          }
+          const pool = store.pools.get(poolId)!;
+          return [{ id: pool.id, totalCores: pool.totalCores, totalMemoryMb: pool.totalMemoryMb, totalDiskGb: pool.totalDiskGb, totalIps: pool.totalIps }];
+        }
+        if (sql.includes('"vmId" != $2')) {
+          return [{ cores: store.otherUsage.cores, memoryMb: store.otherUsage.memoryMb, diskGb: store.otherUsage.diskGb, ips: store.otherUsage.ips }];
+        }
+        if (sql.includes('"vmId" = $1')) {
+          for (const alloc of store.allocations.values()) {
+            if ((alloc as any).vmId === params[0]) {
+              return [{ cores: alloc.cores, memoryMb: alloc.memoryMb, diskGb: alloc.diskGb }];
+            }
+          }
+          return [{ cores: 0, memoryMb: 0, diskGb: 0 }];
+        }
+        return [];
+      }),
+      auditLog: {
+        create: jest.fn(({ data }: any) => {
+          const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
+          store.auditLogs.set(log.id, log);
+          return log;
+        }),
+      },
+    };
+
+    mockPrisma = {
+      vm: {
+        findUnique: jest.fn(({ where }: any) => {
+          return store.vms.get(where.id) ?? null;
+        }),
+        findMany: jest.fn(({ where, orderBy }: any) => {
+          let vms = Array.from(store.vms.values());
+          if (where?.userId) vms = vms.filter((v: any) => v.userId === where.userId);
+          if (orderBy?.createdAt === 'desc') vms.reverse();
+          return vms;
+        }),
+      },
+      resourcePool: {
+        findUnique: jest.fn(({ where }: any) => {
+          return store.pools.get(where.id) ?? null;
         }),
       },
       vmTemplate: {
@@ -114,7 +134,7 @@ describe('VmService', () => {
           return log;
         }),
       },
-      $transaction: jest.fn((fn: any) => fn(mockPrisma)),
+      $transaction: jest.fn((fn: any) => fn(mockTx)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -146,6 +166,10 @@ describe('VmService', () => {
       expect(vm.name).toBe('my-vm');
       expect(vm.status).toBe('provisioning');
       expect(vm.userId).toBe('user-1');
+      expect(mockPoolService.allocateResources).toHaveBeenCalledWith(
+        expect.objectContaining({ poolId: pool.id, cores: 2, memoryMb: 4096, diskGb: 50 }),
+        expect.anything(),
+      );
       expect(store.auditLogs.size).toBe(1);
       expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
         'create-vm',
@@ -287,7 +311,7 @@ describe('VmService', () => {
     });
 
     it('rejects resize that would exceed pool limits', async () => {
-      mockPoolService.getPoolAvailable.mockResolvedValue({ cores: 0, memoryMb: 0, diskGb: 0, ips: 0 });
+      store.otherUsage = { cores: 8, memoryMb: 16000, diskGb: 190, ips: 5 };
       const pool = addPool({ userId: 'user-1' });
       store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
       store.allocations.set('alloc-1', { id: 'alloc-1', poolId: pool.id, vmId: 'vm-1', cores: 1, memoryMb: 1024, diskGb: 10, ips: 0 });

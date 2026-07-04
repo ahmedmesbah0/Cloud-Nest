@@ -300,4 +300,22 @@ export class ProxmoxService implements OnModuleInit {
   async getNextVmid(): Promise<number> {
     return this.get<number>('/cluster/nextid');
   }
+
+  async backupVm(
+    vmid: number,
+    options?: {
+      storage?: string;
+      mode?: 'snapshot' | 'suspend' | 'stop';
+      compress?: 'lzo' | 'gzip' | 'zstd';
+    },
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    const body: Record<string, unknown> = {
+      vmid,
+      mode: options?.mode ?? 'snapshot',
+    };
+    if (options?.storage) body.storage = options.storage;
+    if (options?.compress) body.compress = options.compress;
+    return this.post<string>(`/nodes/${node}/vzdump`, body);
+  }
 }

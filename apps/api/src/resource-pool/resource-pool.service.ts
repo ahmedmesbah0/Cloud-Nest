@@ -115,8 +115,9 @@ export class ResourcePoolService {
 
   async allocateResources(
     allocation: PoolAllocation,
+    transactionClient?: any,
   ): Promise<{ success: boolean; message: string }> {
-    return this.prisma.$transaction(async (tx: any) => {
+    const doAllocate = async (tx: any) => {
       const pools: Array<{
         id: string;
         totalCores: number;
@@ -171,7 +172,12 @@ export class ResourcePoolService {
       });
 
       return { success: true, message: 'Resources allocated' };
-    });
+    };
+
+    if (transactionClient) {
+      return doAllocate(transactionClient);
+    }
+    return this.prisma.$transaction((tx: any) => doAllocate(tx));
   }
 
   async releaseResources(vmId: string) {

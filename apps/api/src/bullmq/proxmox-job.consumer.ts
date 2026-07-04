@@ -133,6 +133,17 @@ export class ProxmoxJobConsumer extends WorkerHost {
           node,
         );
 
+      case 'backup-vm':
+        return this.proxmox.backupVm(
+          payload.vmid as number,
+          {
+            storage: payload.storage as string | undefined,
+            mode: payload.mode as 'snapshot' | 'suspend' | 'stop' | undefined,
+            compress: payload.compress as 'lzo' | 'gzip' | 'zstd' | undefined,
+          },
+          node,
+        );
+
       default:
         throw new Error(`Unknown proxmox job type: ${type}`);
     }

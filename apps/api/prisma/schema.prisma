@@ -293,14 +293,15 @@ model IpAddress {
 }
 
 model ResourcePool {
-  id          String @id @default(cuid())
-  userId      String
-  totalCores  Int
+  id            String @id @default(cuid())
+  userId        String
+  totalCores    Int
   totalMemoryMb Int
-  totalDiskGb Int
-  totalIps    Int    @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  totalDiskGb   Int
+  totalIps      Int    @default(0)
+  backupEnabled Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   user        User   @relation(fields: [userId], references: [id])
   allocations ResourceAllocation[]
@@ -333,6 +334,7 @@ model Vm {
   memoryMb     Int
   diskGb       Int
   cloudInitConfig Json?
+  backupStorage String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -385,6 +387,7 @@ model Backup {
   vmId       String
   name       String
   status     BackupStatus @default(pending)
+  storage    String       @default("local-lvm")
   proxmoxId  String?
   nodeId     String?
   sizeMb     Int?

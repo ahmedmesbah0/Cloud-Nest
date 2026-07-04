@@ -45,6 +45,14 @@ export class VmService {
         },
       });
 
+      await this.poolService.allocateResources({
+        poolId: dto.poolId,
+        vmId: vm.id,
+        cores: dto.cpuCores,
+        memoryMb: dto.memoryMb,
+        diskGb: dto.diskGb,
+      }, tx);
+
       await tx.auditLog.create({
         data: {
           userId,
@@ -137,61 +145,76 @@ export class VmService {
   async resizeVm(userId: string, vmId: string, dto: { cpuCores?: number; memoryMb?: number; diskGb?: number }) {
     const vm = await this.getVm(vmId, userId);
 
-    const pool = await this.prisma.resourcePool.findFirst({
-      where: { userId },
-      include: { allocations: true },
-    });
-    if (!pool) throw new BadRequestException('No resource pool found');
-
-    const currentAlloc = pool.allocations.find((a) => a.vmId === vmId);
-    if (!currentAlloc) throw new BadRequestException('No resource allocation found for VM');
-
-    const cpuDelta = (dto.cpuCores ?? vm.cpuCores) - currentAlloc.cores;
-    const memDelta = (dto.memoryMb ?? vm.memoryMb) - currentAlloc.memoryMb;
-    const diskDelta = (dto.diskGb ?? vm.diskGb) - currentAlloc.diskGb;
-
-    if (cpuDelta > 0 || memDelta > 0 || diskDelta > 0) {
-      const available = await this.poolService.getPoolAvailable(pool.id);
-      if (cpuDelta > 0 && cpuDelta > available.cores) {
-        throw new ForbiddenException(`Insufficient CPU cores: need ${cpuDelta}, available ${available.cores}`);
-      }
-      if (memDelta > 0 && memDelta > available.memoryMb) {
-        throw new ForbiddenException(`Insufficient memory: need ${memDelta}MB, available ${available.memoryMb}MB`);
-      }
-      if (diskDelta > 0 && diskDelta > available.diskGb) {
-        throw new ForbiddenException(`Insufficient disk: need ${diskDelta}GB, available ${available.diskGb}GB`);
-      }
-    }
-
-    const updatedVm = await this.prisma.vm.update({
-      where: { id: vmId },
-      data: {
-        ...(dto.cpuCores && { cpuCores: dto.cpuCores }),
-        ...(dto.memoryMb && { memoryMb: dto.memoryMb }),
-        ...(dto.diskGb && { diskGb: dto.diskGb }),
-      },
-    });
-
-    await this.prisma.resourceAllocation.update({
-      where: { vmId },
-      data: {
-        ...(dto.cpuCores && { cores: dto.cpuCores }),
-        ...(dto.memoryMb && { memoryMb: dto.memoryMb }),
-        ...(dto.diskGb && { diskGb: dto.diskGb }),
-      },
-    });
-
-    await this.prisma.auditLog.create({
-      data: {
+    return this.prisma.$transaction(async (tx: any) => {
+      const pools: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number; totalIps: number }> = await tx.$queryRawUnsafe(
+        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb", "totalIps" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
         userId,
-        action: 'vm.resize',
-        resource: 'vm',
-        resourceId: vmId,
-        metadata: { before: { cpuCores: vm.cpuCores, memoryMb: vm.memoryMb, diskGb: vm.diskGb }, after: dto },
-      },
-    });
+      );
 
-    return updatedVm;
+      const pool = pools[0];
+      if (!pool) throw new BadRequestException('No resource pool found');
+
+      const allocations: Array<{ cores: number; memoryMb: number; diskGb: number; ips: number }> = await tx.$queryRawUnsafe(
+        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb", COALESCE(SUM(ips), 0) as ips FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
+        pool.id, vmId,
+      );
+
+      const currentAllocs: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
+        `SELECT cores, "memoryMb", "diskGb" FROM "ResourceAllocation" WHERE "vmId" = $1`,
+        vmId,
+      );
+      const currentAlloc = currentAllocs[0];
+      if (!currentAlloc) throw new BadRequestException('No resource allocation found for VM');
+
+      const cpuDelta = (dto.cpuCores ?? vm.cpuCores) - Number(currentAlloc.cores);
+      const memDelta = (dto.memoryMb ?? vm.memoryMb) - Number(currentAlloc.memoryMb);
+      const diskDelta = (dto.diskGb ?? vm.diskGb) - Number(currentAlloc.diskGb);
+
+      const used = allocations[0];
+      const availableCores = pool.totalCores - Number(used.cores);
+      const availableMemory = pool.totalMemoryMb - Number(used.memoryMb);
+      const availableDisk = pool.totalDiskGb - Number(used.diskGb);
+
+      if (cpuDelta > 0 && cpuDelta > availableCores) {
+        throw new ForbiddenException(`Insufficient CPU cores: need ${cpuDelta}, available ${availableCores}`);
+      }
+      if (memDelta > 0 && memDelta > availableMemory) {
+        throw new ForbiddenException(`Insufficient memory: need ${memDelta}MB, available ${availableMemory}MB`);
+      }
+      if (diskDelta > 0 && diskDelta > availableDisk) {
+        throw new ForbiddenException(`Insufficient disk: need ${diskDelta}GB, available ${availableDisk}GB`);
+      }
+
+      const updatedVm = await tx.vm.update({
+        where: { id: vmId },
+        data: {
+          ...(dto.cpuCores && { cpuCores: dto.cpuCores }),
+          ...(dto.memoryMb && { memoryMb: dto.memoryMb }),
+          ...(dto.diskGb && { diskGb: dto.diskGb }),
+        },
+      });
+
+      await tx.resourceAllocation.update({
+        where: { vmId },
+        data: {
+          ...(dto.cpuCores && { cores: dto.cpuCores }),
+          ...(dto.memoryMb && { memoryMb: dto.memoryMb }),
+          ...(dto.diskGb && { diskGb: dto.diskGb }),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'vm.resize',
+          resource: 'vm',
+          resourceId: vmId,
+          metadata: { before: { cpuCores: vm.cpuCores, memoryMb: vm.memoryMb, diskGb: vm.diskGb }, after: dto },
+        },
+      });
+
+      return updatedVm;
+    });
   }
 
   async reinstallVm(userId: string, vmId: string, templateId: string) {
