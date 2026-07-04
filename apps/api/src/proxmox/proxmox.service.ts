@@ -246,6 +246,14 @@ export class ProxmoxService implements OnModuleInit {
     return this.del<string>(`/nodes/${node}/qemu/${vmid}/snapshot/${name}`);
   }
 
+  async getVmRrdData(
+    vmid: number,
+    timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' = 'hour',
+    node: string = this.defaultNode,
+  ): Promise<unknown[]> {
+    return this.get<unknown[]>(`/nodes/${node}/qemu/${vmid}/rrddata?timeframe=${timeframe}`);
+  }
+
   async getVncTicket(
     vmid: number,
     node: string = this.defaultNode,

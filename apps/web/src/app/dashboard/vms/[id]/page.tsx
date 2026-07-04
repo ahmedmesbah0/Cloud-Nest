@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { useState, useCallback } from 'react';
 import api from '@/lib/api';
-import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc } from 'lucide-react';
+import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -24,12 +24,32 @@ const statusColors: Record<string, string> = {
   deleted: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
 };
 
+const backupStatusColors: Record<string, string> = {
+  pending: 'text-amber-600 bg-amber-50 dark:bg-amber-900/20',
+  running: 'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
+  completed: 'text-green-600 bg-green-50 dark:bg-green-900/20',
+  failed: 'text-red-600 bg-red-50 dark:bg-red-900/20',
+};
+
+const snapshotStatusColors: Record<string, string> = {
+  pending: 'text-amber-600 bg-amber-50 dark:bg-amber-900/20',
+  created: 'text-green-600 bg-green-50 dark:bg-green-900/20',
+  failed: 'text-red-600 bg-red-50 dark:bg-red-900/20',
+};
+
 export default function VmDetailPage() {
   const params = useParams();
   const router = useRouter();
   const { data: vm, error, mutate } = useSWR(`/vms/${params.id}`, fetcher, { refreshInterval: 0 });
   const { data: templates } = useSWR('/vms/templates', fetcher);
   const { data: estimate } = useSWR(`/billing/estimate/${params.id}`, fetcher);
+  const { data: backups, mutate: mutateBackups } = useSWR(`/vms/${params.id}/backups`, fetcher);
+  const { data: snapshots, mutate: mutateSnapshots } = useSWR(`/vms/${params.id}/snapshots`, fetcher);
+  const { data: metrics, mutate: mutateMetrics } = useSWR(
+    () => vm?.status === 'running' ? `/vms/${params.id}/metrics?timeframe=hour` : null,
+    fetcher,
+    { refreshInterval: 15000 },
+  );
   const [actionVm, setActionVm] = useState(false);
 
   const [showResize, setShowResize] = useState(false);
@@ -40,16 +60,27 @@ export default function VmDetailPage() {
   const [reinstallTemplateId, setReinstallTemplateId] = useState('');
   const [isoForm, setIsoForm] = useState({ iso: '', storage: 'local-lvm' });
 
+  const [createBacking, setCreateBacking] = useState(false);
+  const [creatingSnapshot, setCreatingSnapshot] = useState(false);
+  const [backupMode, setBackupMode] = useState<'snapshot' | 'suspend' | 'stop'>('snapshot');
+
+  const [selectedTimeframe, setSelectedTimeframe] = useState<'hour' | 'day' | 'week' | 'month' | 'year'>('hour');
+
   useVmSocket(
     params.id as string,
     useCallback((update: VmStatusUpdate) => {
       mutate(update, { revalidate: false });
-    }, [mutate]),
+      mutateMetrics();
+    }, [mutate, mutateMetrics]),
     useCallback((notif: UserNotification) => {
       if (notif.type === 'error') toast.error(notif.message);
       else if (notif.type === 'success') toast.success(notif.message);
       else toast(notif.message);
-    }, []),
+      if (notif.type === 'backup-vm' || notif.type === 'create-snapshot' || notif.type === 'delete-snapshot') {
+        mutateBackups();
+        mutateSnapshots();
+      }
+    }, [mutateBackups, mutateSnapshots]),
   );
 
   if (error?.response?.status === 404) {
@@ -167,6 +198,61 @@ export default function VmDetailPage() {
     }
   };
 
+  const handleCreateBackup = async () => {
+    setCreateBacking(true);
+    try {
+      await api.post(`/vms/${vm.id}/backups`, { mode: backupMode });
+      toast.success('Backup queued');
+      setTimeout(() => mutateBackups(), 2000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Backup failed');
+    } finally {
+      setCreateBacking(false);
+    }
+  };
+
+  const handleDeleteBackup = async (backupId: string) => {
+    if (!confirm('Delete this backup?')) return;
+    try {
+      await api.delete(`/vms/${vm.id}/backups/${backupId}`);
+      toast.success('Backup deleted');
+      mutateBackups();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Delete failed');
+    }
+  };
+
+  const handleCreateSnapshot = async () => {
+    const name = prompt('Snapshot name:');
+    if (!name) return;
+    setCreatingSnapshot(true);
+    try {
+      await api.post(`/vms/${vm.id}/snapshots`, { name });
+      toast.success('Snapshot creation queued');
+      setTimeout(() => mutateSnapshots(), 2000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Snapshot failed');
+    } finally {
+      setCreatingSnapshot(false);
+    }
+  };
+
+  const handleDeleteSnapshot = async (snapshotId: string) => {
+    if (!confirm('Delete this snapshot?')) return;
+    try {
+      await api.delete(`/vms/${vm.id}/snapshots/${snapshotId}`);
+      toast.success('Snapshot deletion queued');
+      setTimeout(() => mutateSnapshots(), 2000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Delete failed');
+    }
+  };
+
+  const handleTimeframeChange = async (tf: 'hour' | 'day' | 'week' | 'month' | 'year') => {
+    setSelectedTimeframe(tf);
+    mutateMetrics();
+  };
+
   const actions = [];
   if (vm.status === 'stopped') actions.push({ label: 'Start', action: 'start', icon: Play, color: 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20' });
   if (vm.status === 'running') {
@@ -175,6 +261,12 @@ export default function VmDetailPage() {
   }
 
   const isProvisioning = vm.status === 'provisioning';
+
+  const chartData = (metrics || []).slice(-30);
+
+  const maxCpu = Math.max(...chartData.map((d: any) => d.cpu || 0), 0.01);
+  const maxMem = Math.max(...chartData.map((d: any) => d.mem || 0), 1);
+  const maxNet = Math.max(...chartData.map((d: any) => Math.max(d.netin || 0, d.netout || 0)), 1);
 
   return (
     <div>
@@ -275,6 +367,88 @@ export default function VmDetailPage() {
         </div>
       </div>
 
+      {/* Monitoring Charts */}
+      {vm.status === 'running' && (
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Resource Usage</h2>
+            <div className="flex gap-1">
+              {(['hour', 'day', 'week', 'month', 'year'] as const).map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => handleTimeframeChange(tf)}
+                  className={cn('px-2 py-1 text-xs rounded', selectedTimeframe === tf ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700')}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+          </div>
+          {chartData.length > 0 ? (
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* CPU Chart */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-500 mb-2">CPU</h3>
+                <div className="h-24 flex items-end gap-[2px]">
+                  {chartData.map((d: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex-1 bg-blue-400 dark:bg-blue-500 rounded-t"
+                      style={{ height: `${((d.cpu || 0) / maxCpu) * 100}%`, minHeight: '1px' }}
+                      title={`${((d.cpu || 0) * 100).toFixed(1)}%`}
+                    />
+                  ))}
+                </div>
+              </div>
+              {/* Memory Chart */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-500 mb-2">Memory (bytes)</h3>
+                <div className="h-24 flex items-end gap-[2px]">
+                  {chartData.map((d: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex-1 bg-green-400 dark:bg-green-500 rounded-t"
+                      style={{ height: `${((d.mem || 0) / maxMem) * 100}%`, minHeight: '1px' }}
+                      title={`${((d.mem || 0) / 1024 / 1024).toFixed(0)} MB`}
+                    />
+                  ))}
+                </div>
+              </div>
+              {/* Network In */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-500 mb-2">Network In (bytes/s)</h3>
+                <div className="h-24 flex items-end gap-[2px]">
+                  {chartData.map((d: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex-1 bg-purple-400 dark:bg-purple-500 rounded-t"
+                      style={{ height: `${((d.netin || 0) / maxNet) * 100}%`, minHeight: '1px' }}
+                      title={`${((d.netin || 0) / 1024).toFixed(0)} KB/s`}
+                    />
+                  ))}
+                </div>
+              </div>
+              {/* Network Out */}
+              <div>
+                <h3 className="text-sm font-medium text-slate-500 mb-2">Network Out (bytes/s)</h3>
+                <div className="h-24 flex items-end gap-[2px]">
+                  {chartData.map((d: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex-1 bg-amber-400 dark:bg-amber-500 rounded-t"
+                      style={{ height: `${((d.netout || 0) / maxNet) * 100}%`, minHeight: '1px' }}
+                      title={`${((d.netout || 0) / 1024).toFixed(0)} KB/s`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No metric data available yet. Data appears once the VM has been running for a few minutes.</p>
+          )}
+        </div>
+      )}
+
       <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Billing</h2>
         {estimate ? (
@@ -294,6 +468,111 @@ export default function VmDetailPage() {
           </div>
         ) : (
           <p className="text-slate-500 text-sm">No billing data yet.</p>
+        )}
+      </div>
+
+      {/* Backups */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Backups</h2>
+          <div className="flex items-center gap-2">
+            <select
+              value={backupMode}
+              onChange={(e) => setBackupMode(e.target.value as any)}
+              className="text-xs bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-slate-700 dark:text-slate-300"
+            >
+              <option value="snapshot">Snapshot mode</option>
+              <option value="suspend">Suspend mode</option>
+              <option value="stop">Stop mode</option>
+            </select>
+            <button
+              onClick={handleCreateBackup}
+              disabled={createBacking || isProvisioning}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+            >
+              <HardDrive className="h-4 w-4" /> {createBacking ? 'Queuing...' : 'Create Backup'}
+            </button>
+          </div>
+        </div>
+        {!backups || backups.length === 0 ? (
+          <p className="text-sm text-slate-500">No backups yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="text-left py-2 text-slate-500 font-medium">Name</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Status</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Storage</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Size</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Created</th>
+                  <th className="text-right py-2 text-slate-500 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {backups.map((b: any) => (
+                  <tr key={b.id} className="border-b border-slate-100 dark:border-slate-700 last:border-0">
+                    <td className="py-2 text-slate-900 dark:text-white">{b.name}</td>
+                    <td className="py-2">
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full', backupStatusColors[b.status] || '')}>{b.status}</span>
+                    </td>
+                    <td className="py-2 text-slate-500">{b.storage}</td>
+                    <td className="py-2 text-slate-500">{b.sizeMb ? `${b.sizeMb} MB` : '-'}</td>
+                    <td className="py-2 text-slate-500">{new Date(b.createdAt).toLocaleString()}</td>
+                    <td className="py-2 text-right">
+                      <button onClick={() => handleDeleteBackup(b.id)} className="text-red-500 hover:text-red-700"><Trash className="h-4 w-4" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Snapshots */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Snapshots</h2>
+          <button
+            onClick={handleCreateSnapshot}
+            disabled={creatingSnapshot || isProvisioning}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+          >
+            <Camera className="h-4 w-4" /> {creatingSnapshot ? 'Queuing...' : 'Create Snapshot'}
+          </button>
+        </div>
+        {!snapshots || snapshots.length === 0 ? (
+          <p className="text-sm text-slate-500">No snapshots yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="text-left py-2 text-slate-500 font-medium">Name</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Status</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Created</th>
+                  <th className="text-right py-2 text-slate-500 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {snapshots.map((s: any) => (
+                  <tr key={s.id} className="border-b border-slate-100 dark:border-slate-700 last:border-0">
+                    <td className="py-2 text-slate-900 dark:text-white">{s.name}</td>
+                    <td className="py-2">
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full', snapshotStatusColors[s.status] || '')}>{s.status}</span>
+                    </td>
+                    <td className="py-2 text-slate-500">{new Date(s.createdAt).toLocaleString()}</td>
+                    <td className="py-2 text-right">
+                      {s.status === 'created' && (
+                        <button onClick={() => handleDeleteSnapshot(s.id)} className="text-red-500 hover:text-red-700"><Trash className="h-4 w-4" /></button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

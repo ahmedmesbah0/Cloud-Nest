@@ -6,13 +6,14 @@ import {
 
   Body,
   Param,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VmService } from './vm.service';
-import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto } from './dto/vm.dto';
+import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto } from './dto/vm.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
@@ -77,6 +78,16 @@ export class VmController {
     return this.vmService.reinstallVm(userId, id, dto.templateId);
   }
 
+  @Get(':id/metrics')
+  @ApiOperation({ summary: 'Get VM resource usage metrics (CPU, RAM, disk, network)' })
+  async metrics(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Query('timeframe') timeframe?: 'hour' | 'day' | 'week' | 'month' | 'year',
+  ) {
+    return this.vmService.getMetrics(userId, id, timeframe);
+  }
+
   @Get(':id/console')
   @ApiOperation({ summary: 'Get VNC console details' })
   async console(@CurrentUser('id') userId: string, @Param('id') id: string) {
@@ -97,6 +108,64 @@ export class VmController {
   @ApiOperation({ summary: 'Eject the mounted ISO' })
   async ejectIso(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.vmService.ejectIso(userId, id);
+  }
+
+  // --- Backups ---
+
+  @Get(':id/backups')
+  @ApiOperation({ summary: 'List backups for a VM' })
+  async listBackups(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.listBackups(userId, id);
+  }
+
+  @Post(':id/backups')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Create a backup' })
+  async createBackup(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateBackupDto,
+  ) {
+    return this.vmService.createBackup(userId, id, dto);
+  }
+
+  @Delete(':id/backups/:backupId')
+  @ApiOperation({ summary: 'Delete a backup' })
+  async deleteBackup(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+  ) {
+    return this.vmService.deleteBackup(userId, id, backupId);
+  }
+
+  // --- Snapshots ---
+
+  @Get(':id/snapshots')
+  @ApiOperation({ summary: 'List snapshots for a VM' })
+  async listSnapshots(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.listSnapshots(userId, id);
+  }
+
+  @Post(':id/snapshots')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Create a snapshot' })
+  async createSnapshot(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateSnapshotDto,
+  ) {
+    return this.vmService.createSnapshot(userId, id, dto.name);
+  }
+
+  @Delete(':id/snapshots/:snapshotId')
+  @ApiOperation({ summary: 'Delete a snapshot' })
+  async deleteSnapshot(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('snapshotId') snapshotId: string,
+  ) {
+    return this.vmService.deleteSnapshot(userId, id, snapshotId);
   }
 
   @Delete(':id')

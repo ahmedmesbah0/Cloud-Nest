@@ -290,6 +290,142 @@ export class VmService {
     return { message: 'ISO eject queued' };
   }
 
+  async listBackups(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    return this.prisma.backup.findMany({
+      where: { vmId: vm.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createBackup(
+    userId: string,
+    vmId: string,
+    dto: { mode?: 'snapshot' | 'suspend' | 'stop'; storage?: string; compress?: 'lzo' | 'gzip' | 'zstd' },
+  ) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+
+    const backup = await this.prisma.backup.create({
+      data: {
+        vmId: vm.id,
+        name: `backup-${vm.name || vm.id}-${Date.now()}`,
+        status: 'pending',
+        storage: dto.storage ?? 'local-lvm',
+        nodeId: vm.nodeId,
+      },
+    });
+
+    await this.jobService.enqueueJob('backup-vm', {
+      vmId: vm.id,
+      vmid: vm.proxmoxId,
+      backupId: backup.id,
+      storage: dto.storage,
+      mode: dto.mode,
+      compress: dto.compress,
+      node: vm.nodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.backup.create', resource: 'vm', resourceId: vm.id },
+    });
+
+    return backup;
+  }
+
+  async deleteBackup(userId: string, vmId: string, backupId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const backup = await this.prisma.backup.findUnique({ where: { id: backupId } });
+    if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
+
+    await this.prisma.backup.update({
+      where: { id: backupId },
+      data: { status: 'failed' },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'vm.backup.delete',
+        resource: 'backup',
+        resourceId: backupId,
+        metadata: { vmId },
+      },
+    });
+
+    return { message: 'Backup deleted' };
+  }
+
+  async listSnapshots(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    return this.prisma.snapshot.findMany({
+      where: { vmId: vm.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createSnapshot(userId: string, vmId: string, name: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+
+    const snapshot = await this.prisma.snapshot.create({
+      data: {
+        vmId: vm.id,
+        name,
+        status: 'pending',
+        nodeId: vm.nodeId,
+      },
+    });
+
+    await this.jobService.enqueueJob('create-snapshot', {
+      vmId: vm.id,
+      vmid: vm.proxmoxId,
+      snapshotId: snapshot.id,
+      name,
+      node: vm.nodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.snapshot.create', resource: 'vm', resourceId: vm.id },
+    });
+
+    return snapshot;
+  }
+
+  async deleteSnapshot(userId: string, vmId: string, snapshotId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const snapshot = await this.prisma.snapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot || snapshot.vmId !== vm.id) throw new NotFoundException('Snapshot not found');
+
+    if (snapshot.status !== 'created') {
+      throw new BadRequestException('Snapshot must be in "created" state to delete');
+    }
+
+    const vmWithProxmox = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vmWithProxmox?.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+
+    await this.jobService.enqueueJob('delete-snapshot', {
+      vmId: vm.id,
+      vmid: vmWithProxmox.proxmoxId,
+      snapshotId: snapshot.id,
+      name: snapshot.name,
+      node: vm.nodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.snapshot.delete', resource: 'vm', resourceId: vm.id },
+    });
+
+    return { message: 'Snapshot deletion queued' };
+  }
+
+  async getMetrics(
+    userId: string,
+    vmId: string,
+    timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' = 'hour',
+  ) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+    return this.proxmox.getVmRrdData(vm.proxmoxId, timeframe, vm.nodeId ?? undefined);
+  }
+
   async getVncUrl(userId: string, vmId: string): Promise<{ host: string; port: string; ticket: string; cert: string }> {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');

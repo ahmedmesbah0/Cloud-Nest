@@ -84,6 +84,50 @@ export class ProxmoxJobConsumer extends WorkerHost {
         }
       }
 
+      // Update backup record on success
+      if (type === 'backup-vm' && payload.backupId) {
+        await this.prisma.backup.update({
+          where: { id: payload.backupId as string },
+          data: { status: 'completed', completedAt: new Date(), proxmoxId: String(result) },
+        });
+        if (userId) {
+          this.vmGateway.emitUserNotification(userId, 'vm-notification', {
+            vmId,
+            message: 'Backup completed',
+            type: 'backup-vm',
+          });
+        }
+      }
+
+      // Update snapshot record on success
+      if (type === 'create-snapshot' && payload.snapshotId) {
+        await this.prisma.snapshot.update({
+          where: { id: payload.snapshotId as string },
+          data: { status: 'created', proxmoxId: String(result) },
+        });
+        if (userId) {
+          this.vmGateway.emitUserNotification(userId, 'vm-notification', {
+            vmId,
+            message: 'Snapshot created',
+            type: 'create-snapshot',
+          });
+        }
+      }
+
+      // Remove snapshot record after successful delete
+      if (type === 'delete-snapshot' && payload.snapshotId) {
+        await this.prisma.snapshot.delete({
+          where: { id: payload.snapshotId as string },
+        }).catch(() => {});
+        if (userId) {
+          this.vmGateway.emitUserNotification(userId, 'vm-notification', {
+            vmId,
+            message: 'Snapshot deleted',
+            type: 'delete-snapshot',
+          });
+        }
+      }
+
       if (auditLog && userId) {
         await this.prisma.auditLog.create({
           data: {

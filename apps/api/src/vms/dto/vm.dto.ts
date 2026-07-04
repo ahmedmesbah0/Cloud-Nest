@@ -80,6 +80,30 @@ export class MountIsoDto {
   storage?: string;
 }
 
+export class CreateBackupDto {
+  @ApiPropertyOptional({ enum: ['snapshot', 'suspend', 'stop'] })
+  @IsOptional()
+  @IsEnum(['snapshot', 'suspend', 'stop'])
+  mode?: 'snapshot' | 'suspend' | 'stop';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  storage?: string;
+
+  @ApiPropertyOptional({ enum: ['lzo', 'gzip', 'zstd'] })
+  @IsOptional()
+  @IsEnum(['lzo', 'gzip', 'zstd'])
+  compress?: 'lzo' | 'gzip' | 'zstd';
+}
+
+export class CreateSnapshotDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(128)
+  name!: string;
+}
+
 export class VmResponseDto {
   @ApiProperty()
   id!: string;
