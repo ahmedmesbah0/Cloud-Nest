@@ -1,7 +1,10 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
+// Use a relative /api base URL so the browser makes same-origin requests
+// to the Next.js server, which proxies them to the API via next.config.ts
+// rewrites. This eliminates CORS issues entirely.
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000',
+  baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -32,7 +35,7 @@ api.interceptors.response.use(
         const refreshToken = localStorage.getItem('refreshToken');
         if (!refreshToken) throw error;
         const { data } = await axios.post(
-          `${api.defaults.baseURL}/auth/refresh`,
+          `/api/auth/refresh`,
           { refreshToken },
         );
         setAccessToken(data.accessToken);
