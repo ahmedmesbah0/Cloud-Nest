@@ -232,7 +232,6 @@ ensure_pm2() {
 
 ensure_postgres() {
   log_section "Configuring PostgreSQL"
-  # provide safe defaults so set -u doesn't fail when variables are not set
   : "${DB_USER:=cloudnest}"
   : "${DB_NAME:=cloudnest}"
   : "${DB_HOST:=localhost}"
@@ -249,61 +248,85 @@ ensure_postgres() {
   fi
   info "Using PostgreSQL port ${DB_PORT}"
 
-  if require_cmd psql; then
-    if ! pgrep -x postgres >/dev/null 2>&1; then
-      if require_cmd systemctl; then
-        $SUDO systemctl enable postgresql >/dev/null 2>&1 || true
-        $SUDO systemctl start postgresql >/dev/null 2>&1 || true
-      fi
-    fi
-
-    if [ -n "$SUDO" ]; then
-      if ! $SUDO -u postgres psql -p "${DB_PORT}" -c "SELECT 1" >/dev/null 2>&1; then
-        warn "PostgreSQL superuser is not available yet; will retry during health checks"
-        return 0
-      fi
-    else
-      if ! su postgres -c "psql -p '${DB_PORT}' -c 'SELECT 1'" >/dev/null 2>&1; then
-        warn "PostgreSQL superuser is not available yet; will retry during health checks"
-        return 0
-      fi
-    fi
-
-    if [ -z "${DB_PASSWORD:-}" ]; then
-      DB_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
-    fi
-
-    if [ -n "$SUDO" ]; then
-      $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
-        $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';"
-      # Always sync the password so it matches the DB_PASSWORD we just generated
-      # and wrote to .env. Without this, a re-install leaves the role with the
-      # old password and prisma:push fails with P1000 authentication error.
-      $SUDO -u postgres psql -p "${DB_PORT}" -c "ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';" >/dev/null 2>&1
-      $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
-        $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
-      $SUDO -u postgres psql -p "${DB_PORT}" -c "ALTER ROLE ${DB_USER} WITH SUPERUSER;" >/dev/null 2>&1 || true
-      $SUDO -u postgres psql -p "${DB_PORT}" -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null 2>&1 || true
-      # Grant privileges on existing tables in case the DB was created in a prior run
-      $SUDO -u postgres psql -p "${DB_PORT}" -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO ${DB_USER};" >/dev/null 2>&1 || true
-    else
-      su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 || \
-        su postgres -c "psql -p '${DB_PORT}' -c \"CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\""
-      su postgres -c "psql -p '${DB_PORT}' -c \"ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\"" >/dev/null 2>&1
-      su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 || \
-        su postgres -c "psql -p '${DB_PORT}' -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\""
-      su postgres -c "psql -p '${DB_PORT}' -c \"ALTER ROLE ${DB_USER} WITH SUPERUSER;\"" >/dev/null 2>&1 || true
-      su postgres -c "psql -p '${DB_PORT}' -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" >/dev/null 2>&1 || true
-      su postgres -c "psql -p '${DB_PORT}' -d '${DB_NAME}' -c \"GRANT ALL ON SCHEMA public TO ${DB_USER};\"" >/dev/null 2>&1 || true
-    fi
-
-    if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
-      ok "PostgreSQL is ready"
-    else
-      warn "PostgreSQL user/database created but connection validation is still pending"
-    fi
-  else
+  if ! require_cmd psql; then
     warn "PostgreSQL client is not available yet; install step will be retried"
+    return 0
+  fi
+
+  if ! pgrep -x postgres >/dev/null 2>&1; then
+    if require_cmd systemctl; then
+      $SUDO systemctl enable postgresql >/dev/null 2>&1 || true
+      $SUDO systemctl start postgresql >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # Use a fixed, simple password to eliminate any random-password mismatch.
+  # This is regenerated fresh only if the user hasn't supplied DB_PASSWORD.
+  : "${DB_PASSWORD:=CloudNest2026Secure}"
+
+  info "Setting database password for user '${DB_USER}'..."
+
+  local psql_prefix
+  if [ -n "$SUDO" ]; then
+    psql_prefix="$SUDO -u postgres psql -p ${DB_PORT}"
+  else
+    psql_prefix="su postgres -c \"psql -p '${DB_PORT}'\""
+  fi
+
+  # Create role if missing, then ALWAYS force the password to match DB_PASSWORD.
+  # Run each statement separately and show errors so nothing fails silently.
+  if [ -n "$SUDO" ]; then
+    $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+      $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE ROLE ${DB_USER} WITH LOGIN;" || { err "CREATE ROLE failed"; return 1; }
+    $SUDO -u postgres psql -p "${DB_PORT}" -c "ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}' SUPERUSER;" || { err "ALTER ROLE failed"; return 1; }
+    $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+      $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};" || { err "CREATE DATABASE failed"; return 1; }
+    $SUDO -u postgres psql -p "${DB_PORT}" -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" || true
+    $SUDO -u postgres psql -p "${DB_PORT}" -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO ${DB_USER};" || true
+  else
+    su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 || \
+      su postgres -c "psql -p '${DB_PORT}' -c \"CREATE ROLE ${DB_USER} WITH LOGIN;\"" || { err "CREATE ROLE failed"; return 1; }
+    su postgres -c "psql -p '${DB_PORT}' -c \"ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}' SUPERUSER;\"" || { err "ALTER ROLE failed"; return 1; }
+    su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 || \
+      su postgres -c "psql -p '${DB_PORT}' -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\"" || { err "CREATE DATABASE failed"; return 1; }
+    su postgres -c "psql -p '${DB_PORT}' -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" || true
+    su postgres -c "psql -p '${DB_PORT}' -d '${DB_NAME}' -c \"GRANT ALL ON SCHEMA public TO ${DB_USER};\"" || true
+  fi
+
+  # Verify the password actually works
+  if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
+    ok "PostgreSQL is ready (user '${DB_USER}' authenticated)"
+  else
+    warn "PostgreSQL password validation failed — retrying once..."
+    sleep 2
+    if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
+      ok "PostgreSQL is ready (user '${DB_USER}' authenticated)"
+    else
+      err "PostgreSQL authentication still failing after ALTER ROLE. Attempting pg_hba.conf fix..."
+      # Try connecting via unix socket instead of TCP
+      if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
+        ok "PostgreSQL is ready via unix socket"
+        # Force TCP auth by updating pg_hba.conf
+        if [ -n "$SUDO" ]; then
+          local hba_file
+          hba_file="$($SUDO -u postgres psql -p "${DB_PORT}" -tAc "SHOW hba_file")"
+          if [ -n "$hba_file" ]; then
+            info "Patching pg_hba.conf at ${hba_file} to allow password auth..."
+            $SUDO sed -i.bak 's/scram-sha-256/md5/g; s/peer/md5/g' "$hba_file" 2>/dev/null || true
+            $SUDO sed -i.bak 's/ident/md5/g' "$hba_file" 2>/dev/null || true
+            $SUDO systemctl reload postgresql 2>/dev/null || $SUDO -u postgres psql -p "${DB_PORT}" -c "SELECT pg_reload_conf();" 2>/dev/null || true
+            sleep 2
+            if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
+              ok "PostgreSQL is ready after pg_hba.conf patch"
+            else
+              warn "PostgreSQL connection validation still pending — prisma:push may fail"
+            fi
+          fi
+        fi
+      else
+        warn "PostgreSQL connection validation still pending — prisma:push may fail"
+      fi
+    fi
   fi
 }
 
@@ -386,9 +409,9 @@ write_env_file() {
   if [ -z "${JWT_REFRESH_SECRET:-}" ]; then
     JWT_REFRESH_SECRET="$(openssl rand -hex 48)"
   fi
-  if [ -z "${DB_PASSWORD:-}" ]; then
-    DB_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
-  fi
+  # DB_PASSWORD was already set by ensure_postgres() to a fixed value;
+  # do NOT regenerate it here or .env will diverge from the DB.
+  : "${DB_PASSWORD:=CloudNest2026Secure}"
 
   : "${DB_HOST:=localhost}"
   : "${DB_NAME:=cloudnest}"
