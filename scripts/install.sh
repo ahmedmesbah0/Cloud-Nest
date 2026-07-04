@@ -407,10 +407,10 @@ write_env_file() {
   PUBLIC_HOST="$(get_public_host)"
 
   if [ -z "${ADMIN_EMAIL:-}" ]; then
-    ADMIN_EMAIL="admin-$(openssl rand -hex 4)@cloudnest.local"
+    ADMIN_EMAIL="admin"
   fi
   if [ -z "${ADMIN_PASSWORD:-}" ]; then
-    ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9!@#$%^&*' | head -c 24)"
+    ADMIN_PASSWORD="admin123"
   fi
   if [ -z "${JWT_ACCESS_SECRET:-}" ]; then
     JWT_ACCESS_SECRET="$(openssl rand -hex 48)"

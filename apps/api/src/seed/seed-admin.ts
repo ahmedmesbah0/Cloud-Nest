@@ -33,7 +33,7 @@ function getAdminCredentials() {
 
 export async function seedAdmin(emailArg?: string, passwordArg?: string) {
   const { email, password } = { email: emailArg, password: passwordArg };
-  const resolvedEmail = email || process.env.ADMIN_EMAIL || 'admin@cloudnest.io';
+  const resolvedEmail = email || process.env.ADMIN_EMAIL || 'admin';
   const resolvedPassword = password || process.env.ADMIN_PASSWORD || 'AdminP4ss!';
 
   const existing = await prisma.user.findUnique({ where: { email: resolvedEmail } });
