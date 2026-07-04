@@ -2,6 +2,7 @@ import { Module, Global, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { ProxmoxJobService } from './proxmox-job.service';
+import { IdempotencyKeyRepository } from './idempotency-key.repository';
 import { ProxmoxJobConsumer } from './proxmox-job.consumer';
 import { VmModule } from '../vms/vm.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
@@ -49,7 +50,7 @@ import { MetricsJobConsumer } from '../metrics/metrics-job.consumer';
       name: 'report-jobs',
     }),
   ],
-  providers: [ProxmoxJobService, ProxmoxJobConsumer, ReportJobConsumer, MetricsJobConsumer],
+  providers: [ProxmoxJobService, IdempotencyKeyRepository, ProxmoxJobConsumer, ReportJobConsumer, MetricsJobConsumer],
   exports: [BullModule, ProxmoxJobService],
 })
 export class BullmqModule {}

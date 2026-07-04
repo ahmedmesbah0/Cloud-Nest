@@ -1,13 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
+import { MailRepository } from './mail.repository';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly mailRepository: MailRepository) {}
 
   async send(options: { to: string; subject: string; text: string; html?: string }) {
     const transporter = await this.getTransporter();
@@ -28,9 +28,9 @@ export class MailService {
     if (this.transporter) return this.transporter;
 
     try {
-      const settings = await this.prisma.setting.findMany({
-        where: { key: { in: ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from'] } },
-      });
+      const settings = await this.mailRepository.findSettingsByKeys(
+        ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from'],
+      );
       const map: Record<string, string> = {};
       for (const s of settings) map[s.key] = s.value;
 
@@ -52,7 +52,7 @@ export class MailService {
 
   private async getFromAddress(): Promise<string> {
     try {
-      const s = await this.prisma.setting.findUnique({ where: { key: 'smtp_from' } });
+      const s = await this.mailRepository.findSettingByKey('smtp_from');
       return s?.value || 'noreply@cloudnest.io';
     } catch {
       return 'noreply@cloudnest.io';

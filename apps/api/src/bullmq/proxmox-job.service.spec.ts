@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { ProxmoxJobService } from './proxmox-job.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { IdempotencyKeyRepository } from './idempotency-key.repository';
 
 describe('ProxmoxJobService', () => {
   let service: ProxmoxJobService;
   let mockQueue: any;
-  let mockPrisma: any;
+  let mockIdempotencyRepo: any;
 
   const mockIdempotencyKeys = new Map<string, any>();
 
@@ -17,24 +17,20 @@ describe('ProxmoxJobService', () => {
       add: jest.fn().mockResolvedValue({ id: 'bull-job-1' }),
     };
 
-    mockPrisma = {
-      idempotencyKey: {
-        findUnique: jest.fn(({ where }: { where: { key: string } }) => {
-          return mockIdempotencyKeys.get(where.key) ?? null;
-        }),
-        create: jest.fn(({ data }: { data: any }) => {
-          mockIdempotencyKeys.set(data.key, data);
-          return data;
-        }),
-        update: jest.fn(),
-      },
+    mockIdempotencyRepo = {
+      findByKey: jest.fn((key: string) => mockIdempotencyKeys.get(key) ?? null),
+      create: jest.fn((data: any) => {
+        mockIdempotencyKeys.set(data.key, data);
+        return data;
+      }),
+      updateStatus: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProxmoxJobService,
         { provide: getQueueToken('proxmox-jobs'), useValue: mockQueue },
-        { provide: PrismaService, useValue: mockPrisma },
+        { provide: IdempotencyKeyRepository, useValue: mockIdempotencyRepo },
       ],
     }).compile();
 
@@ -53,12 +49,12 @@ describe('ProxmoxJobService', () => {
 
       expect(result.status).toBe('queued');
       expect(result.skipped).toBeUndefined();
-      expect(mockPrisma.idempotencyKey.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+      expect(mockIdempotencyRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
           key: 'create-vm-abc123',
           action: 'create-vm',
         }),
-      });
+      );
       expect(mockQueue.add).toHaveBeenCalledWith(
         'create-vm',
         expect.objectContaining({

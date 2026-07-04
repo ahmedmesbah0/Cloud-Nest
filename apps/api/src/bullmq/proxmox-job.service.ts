@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { PrismaService } from '../prisma/prisma.service';
 import { randomUUID } from 'node:crypto';
+import { IdempotencyKeyRepository } from './idempotency-key.repository';
 
 export type ProxmoxJobType =
   | 'create-vm'
@@ -47,7 +47,7 @@ export class ProxmoxJobService {
 
   constructor(
     @InjectQueue('proxmox-jobs') private readonly queue: Queue<ProxmoxJobData>,
-    private readonly prisma: PrismaService,
+    private readonly idempotencyKeyRepository: IdempotencyKeyRepository,
   ) {}
 
   async enqueueJob(
@@ -62,20 +62,16 @@ export class ProxmoxJobService {
   ) {
     const idempotencyKey = options?.idempotencyKey ?? `${type}-${randomUUID()}`;
 
-    const existing = await this.prisma.idempotencyKey.findUnique({
-      where: { key: idempotencyKey },
-    });
+    const existing = await this.idempotencyKeyRepository.findByKey(idempotencyKey);
     if (existing) {
       this.logger.warn(`Idempotency key "${idempotencyKey}" already exists (status=${existing.status}), skipping enqueue`);
       return { idempotencyKey, status: existing.status, skipped: true };
     }
 
-    await this.prisma.idempotencyKey.create({
-      data: {
-        key: idempotencyKey,
-        action: type,
-        status: 'pending',
-      },
+    await this.idempotencyKeyRepository.create({
+      key: idempotencyKey,
+      action: type,
+      status: 'pending',
     });
 
     const job = await this.queue.add(type, {
@@ -94,27 +90,18 @@ export class ProxmoxJobService {
   }
 
   async getJobStatus(idempotencyKey: string) {
-    const record = await this.prisma.idempotencyKey.findUnique({
-      where: { key: idempotencyKey },
-    });
-    return record;
+    return this.idempotencyKeyRepository.findByKey(idempotencyKey);
   }
 
   async findIdempotencyKey(key: string) {
-    return this.prisma.idempotencyKey.findUnique({ where: { key } });
+    return this.idempotencyKeyRepository.findByKey(key);
   }
 
   async completeIdempotencyKey(key: string) {
-    return this.prisma.idempotencyKey.update({
-      where: { key },
-      data: { status: 'completed', completedAt: new Date() },
-    });
+    return this.idempotencyKeyRepository.updateStatus(key, 'completed', new Date());
   }
 
   async failIdempotencyKey(key: string) {
-    return this.prisma.idempotencyKey.update({
-      where: { key },
-      data: { status: 'failed' },
-    });
+    return this.idempotencyKeyRepository.updateStatus(key, 'failed');
   }
 }

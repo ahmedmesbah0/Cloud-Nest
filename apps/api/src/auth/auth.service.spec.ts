@@ -23,6 +23,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
+import { AuthRepository } from './auth.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 
@@ -41,156 +42,116 @@ describe('AuthService', () => {
   const mockAuditLogCreate = jest.fn().mockResolvedValue({});
 
   const mockTx = (tx?: any): any => tx || {
-    user: {
-      count: jest.fn(() => store.users.size),
-      create: jest.fn((args: { data: any }) => {
-        const user = {
-          id: `user-${store.users.size + 1}`,
-          emailVerified: false,
-          totpEnabled: false,
-          isActive: true,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          ...args.data,
-        };
-        store.users.set(user.id, user);
-        return user;
-      }),
-      update: jest.fn((args: { where: { id: string }; data: any }) => {
-        const user = store.users.get(args.where.id);
-        if (!user) throw new Error('User not found');
-        Object.assign(user, args.data);
-        return user;
-      }),
-    },
-    userRole: {
-      create: jest.fn((args: { data: { userId: string; roleId: string } }) => {
-        const ur = { id: `ur-${store.userRoles.size + 1}`, ...args.data };
-        store.userRoles.set(ur.id, ur);
-        return ur;
-      }),
-    },
-    session: {
-      deleteMany: jest.fn((args: { where: { userId?: string; refreshToken?: string } }) => {
-        if (args.where.userId) {
-          for (const [id, s] of store.sessions) {
-            if (s.userId === args.where.userId) store.sessions.delete(id);
-          }
-        }
-        if (args.where.refreshToken) {
-          for (const [id, s] of store.sessions) {
-            if (s.refreshToken === args.where.refreshToken) store.sessions.delete(id);
-          }
-        }
-        return { count: 1 };
-      }),
-    },
     auditLog: {
       create: mockAuditLogCreate,
     },
   };
 
+  const mockAuthRepository = {
+    findUserByEmail: jest.fn((email: string) => {
+      for (const u of store.users.values()) {
+        if (u.email === email) return u;
+      }
+      return null;
+    }),
+    findUserById: jest.fn((id: string) => store.users.get(id) ?? null),
+    findUserProfile: jest.fn((id: string) => {
+      const u = store.users.get(id);
+      if (!u) return null;
+      return {
+        id: u.id, email: u.email, name: u.name,
+        emailVerified: u.emailVerified, totpEnabled: u.totpEnabled,
+        roles: u.roles ?? [],
+      };
+    }),
+    findUserByVerifyToken: jest.fn((token: string) => {
+      for (const u of store.users.values()) {
+        if (u.emailVerifyToken === token && !u.emailVerified) return u;
+      }
+      return null;
+    }),
+    findUserByResetToken: jest.fn((tokenHash: string) => {
+      for (const u of store.users.values()) {
+        if (u.emailVerifyToken === tokenHash) return u;
+      }
+      return null;
+    }),
+    countUsers: jest.fn((_tx?: any) => store.users.size),
+    createUser: jest.fn((data: Record<string, unknown>, _tx?: any) => {
+      const user: any = {
+        id: `user-${store.users.size + 1}`,
+        emailVerified: false,
+        totpEnabled: false,
+        isActive: true,
+        roles: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      };
+      store.users.set(user.id, user);
+      return user;
+    }),
+    updateUser: jest.fn((id: string, data: Record<string, unknown>, _tx?: any) => {
+      const user = store.users.get(id);
+      if (!user) throw new Error('User not found');
+      Object.assign(user, data);
+      return user;
+    }),
+    upsertRole: jest.fn((where: { name: string }, create: Record<string, unknown>, _update: Record<string, unknown>) => {
+      for (const r of store.roles.values()) {
+        if (r.name === where.name) return r;
+      }
+      const role = {
+        id: `role-${store.roles.size + 1}`,
+        name: create.name as string,
+        description: create.description as string,
+      };
+      store.roles.set(role.id, role);
+      return role;
+    }),
+    createUserRole: jest.fn((data: { userId: string; roleId: string }, _tx?: any) => {
+      const ur = { id: `ur-${store.userRoles.size + 1}`, ...data };
+      store.userRoles.set(ur.id, ur);
+      return ur;
+    }),
+    createSession: jest.fn((data: Record<string, unknown>, _tx?: any) => {
+      const session = { id: `session-${store.sessions.size + 1}`, ...data };
+      store.sessions.set(session.id, session);
+      return session;
+    }),
+    findSessionByRefreshToken: jest.fn((hashed: string) => {
+      for (const s of store.sessions.values()) {
+        if (s.refreshToken === hashed) return s;
+      }
+      return null;
+    }),
+    findSessionsByRefreshToken: jest.fn((hashed: string) => {
+      const results: any[] = [];
+      for (const s of store.sessions.values()) {
+        if (s.refreshToken === hashed) results.push(s);
+      }
+      return results;
+    }),
+    deleteSession: jest.fn((id: string, _tx?: any) => {
+      store.sessions.delete(id);
+      return { id };
+    }),
+    deleteSessionsByRefreshToken: jest.fn((hashed: string, _tx?: any) => {
+      for (const [id, s] of store.sessions) {
+        if (s.refreshToken === hashed) store.sessions.delete(id);
+      }
+      return { count: 1 };
+    }),
+    deleteSessionsByUserId: jest.fn((userId: string, _tx?: any) => {
+      for (const [id, s] of store.sessions) {
+        if (s.userId === userId) store.sessions.delete(id);
+      }
+      return { count: 1 };
+    }),
+  };
+
   const mockPrisma = {
     $transaction: jest.fn(async (fn: any) => fn(mockTx())),
-    user: {
-      count: jest.fn(() => store.users.size),
-      findUnique: jest.fn((args: { where: { id?: string; email?: string } }) => {
-        for (const u of store.users.values()) {
-          if (args.where.id && u.id === args.where.id) return u;
-          if (args.where.email && u.email === args.where.email) return u;
-        }
-        return null;
-      }),
-      findFirst: jest.fn((args: { where: Record<string, any> }) => {
-        for (const u of store.users.values()) {
-          const match = Object.entries(args.where).every(
-            ([k, v]) => (u as any)[k] === v,
-          );
-          if (match) return u;
-        }
-        return null;
-      }),
-      create: jest.fn((args: { data: any }) => {
-        const user = {
-          id: `user-${store.users.size + 1}`,
-          emailVerified: false,
-          totpEnabled: false,
-          isActive: true,
-          roles: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          ...args.data,
-        };
-        store.users.set(user.id, user);
-        return user;
-      }),
-      update: jest.fn((args: { where: { id: string }; data: any }) => {
-        const user = store.users.get(args.where.id);
-        if (!user) throw new Error('User not found');
-        Object.assign(user, args.data);
-        return user;
-      }),
-    },
-    role: {
-      upsert: jest.fn((args: { where: { name: string }; create: any; update: any }) => {
-        for (const r of store.roles.values()) {
-          if (r.name === args.where.name) return r;
-        }
-        const role = {
-          id: `role-${store.roles.size + 1}`,
-          name: args.create.name,
-          description: args.create.description,
-        };
-        store.roles.set(role.id, role);
-        return role;
-      }),
-    },
-    userRole: {
-      create: jest.fn((args: { data: { userId: string; roleId: string } }) => {
-        const ur = { id: `ur-${store.userRoles.size + 1}`, ...args.data };
-        store.userRoles.set(ur.id, ur);
-        return ur;
-      }),
-    },
-    session: {
-      findMany: jest.fn((args: { where: { refreshToken?: string } }) => {
-        const results: any[] = [];
-        for (const s of store.sessions.values()) {
-          if (args.where?.refreshToken && s.refreshToken === args.where.refreshToken) {
-            results.push(s);
-          }
-        }
-        return results;
-      }),
-      findUnique: jest.fn((args: { where: { refreshToken: string } }) => {
-        for (const s of store.sessions.values()) {
-          if (s.refreshToken === args.where.refreshToken) return s;
-        }
-        return null;
-      }),
-      create: jest.fn((args: { data: any }) => {
-        const session = { id: `session-${store.sessions.size + 1}`, ...args.data };
-        store.sessions.set(session.id, session);
-        return session;
-      }),
-      delete: jest.fn((args: { where: { id: string } }) => {
-        store.sessions.delete(args.where.id);
-        return { id: args.where.id };
-      }),
-      deleteMany: jest.fn((args: { where: { userId?: string; refreshToken?: string } }) => {
-        if (args.where.userId) {
-          for (const [id, s] of store.sessions) {
-            if (s.userId === args.where.userId) store.sessions.delete(id);
-          }
-        }
-        if (args.where.refreshToken) {
-          for (const [id, s] of store.sessions) {
-            if (s.refreshToken === args.where.refreshToken) store.sessions.delete(id);
-          }
-        }
-        return { count: 1 };
-      }),
-    },
   };
 
   const mockJwtService = { sign: jest.fn().mockReturnValue('jwt-access-token') };
@@ -214,6 +175,7 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
+        { provide: AuthRepository, useValue: mockAuthRepository },
         { provide: PrismaService, useValue: mockPrisma },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },

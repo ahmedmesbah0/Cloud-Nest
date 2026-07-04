@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaService } from 'src/prisma/prisma.service';
 import * as argon2 from 'argon2';
 import { TOTP } from '@otplib/totp';
 import { NobleCryptoPlugin } from '@otplib/plugin-crypto-noble';
@@ -15,12 +14,14 @@ import * as qrcode from 'qrcode';
 import { randomBytes, createHash } from 'node:crypto';
 
 import { MailService } from '../mail/mail.service';
+import { AuthRepository } from './auth.repository';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Enable2faDto } from './dto/enable-2fa.dto';
 import { Verify2faDto } from './dto/verify-2fa.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { PrismaService } from '../prisma/prisma.service';
 
 const totp = new TOTP({ crypto: new NobleCryptoPlugin(), base32: new ScureBase32Plugin() });
 
@@ -29,6 +30,7 @@ export class AuthService {
   private readonly totpIssuer: string;
 
   constructor(
+    private readonly authRepository: AuthRepository,
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
@@ -38,46 +40,49 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const existing = await this.authRepository.findUserByEmail(dto.email);
     if (existing) {
       throw new ConflictException('Email already registered');
     }
 
     const passwordHash = await argon2.hash(dto.password);
 
-    const adminRole = await this.prisma.role.upsert({
-      where: { name: 'admin' },
-      update: {},
-      create: { name: 'admin', description: 'Administrator with full access' },
-    });
+    const adminRole = await this.authRepository.upsertRole(
+      { name: 'admin' },
+      { name: 'admin', description: 'Administrator with full access' },
+      {},
+    );
 
-    const customerRole = await this.prisma.role.upsert({
-      where: { name: 'customer' },
-      update: {},
-      create: { name: 'customer', description: 'Standard customer' },
-    });
+    const customerRole = await this.authRepository.upsertRole(
+      { name: 'customer' },
+      { name: 'customer', description: 'Standard customer' },
+      {},
+    );
 
     const { user, isFirstUser } = await this.prisma.$transaction(async (tx) => {
-      const userCount = await tx.user.count();
+      const userCount = await this.authRepository.countUsers(tx);
       const isFirstUser = userCount === 0;
 
-      const u = await tx.user.create({
-        data: {
+      const u = await this.authRepository.createUser(
+        {
           email: dto.email,
           passwordHash,
           name: dto.name,
           emailVerified: isFirstUser,
         },
-      });
+        tx,
+      );
 
-      await tx.userRole.create({
-        data: { userId: u.id, roleId: customerRole.id },
-      });
+      await this.authRepository.createUserRole(
+        { userId: u.id, roleId: customerRole.id },
+        tx,
+      );
 
       if (isFirstUser) {
-        await tx.userRole.create({
-          data: { userId: u.id, roleId: adminRole.id },
-        });
+        await this.authRepository.createUserRole(
+          { userId: u.id, roleId: adminRole.id },
+          tx,
+        );
       }
 
       await tx.auditLog.create({
@@ -94,17 +99,10 @@ export class AuthService {
 
     if (isFirstUser) {
       console.log(`First user registered as admin: ${user.email}`);
-      // First user (admin) doesn't need email verification
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { emailVerified: true },
-      });
+      await this.authRepository.updateUser(user.id, { emailVerified: true });
     } else {
       const emailVerifyToken = randomBytes(32).toString('hex');
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { emailVerifyToken },
-      });
+      await this.authRepository.updateUser(user.id, { emailVerifyToken });
 
       const verifyUrl = `${this.configService.get<string>('NEXT_PUBLIC_API_URL', 'http://localhost:3000')}/auth/verify-email?token=${emailVerifyToken}`;
       await this.mailService.send({
@@ -119,18 +117,17 @@ export class AuthService {
   }
 
   async verifyEmail(token: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { emailVerifyToken: token, emailVerified: false },
-    });
+    const user = await this.authRepository.findUserByVerifyToken(token);
     if (!user) {
       throw new BadRequestException('Invalid or expired verification token');
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: user.id },
-        data: { emailVerified: true, emailVerifyToken: null },
-      });
+      await this.authRepository.updateUser(
+        user.id,
+        { emailVerified: true, emailVerifyToken: null },
+        tx,
+      );
       await tx.auditLog.create({
         data: {
           userId: user.id,
@@ -145,7 +142,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const user = await this.authRepository.findUserByEmail(dto.email);
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -167,19 +164,7 @@ export class AuthService {
   }
 
   async getProfile(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        emailVerified: true,
-        totpEnabled: true,
-        roles: {
-          select: { role: { select: { name: true } } },
-        },
-      },
-    });
+    const user = await this.authRepository.findUserProfile(userId);
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
@@ -187,7 +172,7 @@ export class AuthService {
   }
 
   async verify2fa(userId: string, dto: Verify2faDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.authRepository.findUserById(userId);
     if (!user || !user.totpEnabled || !user.totpSecret) {
       throw new UnauthorizedException('2FA not enabled');
     }
@@ -206,35 +191,28 @@ export class AuthService {
 
   async refreshToken(refreshToken: string) {
     const hashed = this.hashToken(refreshToken);
-    const session = await this.prisma.session.findUnique({
-      where: { refreshToken: hashed },
-    });
+    const session = await this.authRepository.findSessionByRefreshToken(hashed);
     if (!session || session.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: session.userId } });
+    const user = await this.authRepository.findUserById(session.userId);
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
 
-    await this.prisma.session.delete({ where: { id: session.id } });
+    await this.authRepository.deleteSession(session.id);
 
     return this.generateTokens(user.id, user.email);
   }
 
   async logout(refreshToken: string) {
     const hashed = this.hashToken(refreshToken);
-    const sessions = await this.prisma.session.findMany({
-      where: { refreshToken: hashed },
-      select: { userId: true },
-    });
+    const sessions = await this.authRepository.findSessionsByRefreshToken(hashed);
     const userId = sessions.length > 0 ? sessions[0].userId : null;
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.session.deleteMany({
-        where: { refreshToken: hashed },
-      });
+      await this.authRepository.deleteSessionsByRefreshToken(hashed, tx);
       if (userId) {
         await tx.auditLog.create({
           data: {
@@ -250,7 +228,7 @@ export class AuthService {
   }
 
   async generate2faSecret(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.authRepository.findUserById(userId);
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
@@ -267,7 +245,7 @@ export class AuthService {
   }
 
   async enable2fa(userId: string, dto: Enable2faDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.authRepository.findUserById(userId);
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
@@ -279,10 +257,11 @@ export class AuthService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: { totpSecret: secret, totpEnabled: true },
-      });
+      await this.authRepository.updateUser(
+        userId,
+        { totpSecret: secret, totpEnabled: true },
+        tx,
+      );
       await tx.auditLog.create({
         data: {
           userId,
@@ -297,7 +276,7 @@ export class AuthService {
   }
 
   async disable2fa(userId: string, dto: Verify2faDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.authRepository.findUserById(userId);
     if (!user || !user.totpEnabled || !user.totpSecret) {
       throw new BadRequestException('2FA not enabled');
     }
@@ -308,10 +287,11 @@ export class AuthService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: { totpSecret: null, totpEnabled: false },
-      });
+      await this.authRepository.updateUser(
+        userId,
+        { totpSecret: null, totpEnabled: false },
+        tx,
+      );
       await tx.auditLog.create({
         data: {
           userId,
@@ -326,7 +306,7 @@ export class AuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const user = await this.authRepository.findUserByEmail(dto.email);
     if (!user) {
       return { message: 'If that email exists, a reset link has been sent' };
     }
@@ -335,13 +315,11 @@ export class AuthService {
     const resetTokenHash = createHash('sha256').update(resetToken).digest('hex');
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: user.id },
-        data: {
-          emailVerifyToken: resetTokenHash,
-          updatedAt: new Date(),
-        },
-      });
+      await this.authRepository.updateUser(
+        user.id,
+        { emailVerifyToken: resetTokenHash, updatedAt: new Date() },
+        tx,
+      );
       await tx.auditLog.create({
         data: {
           userId: user.id,
@@ -366,9 +344,7 @@ export class AuthService {
   async resetPassword(dto: ResetPasswordDto) {
     const resetTokenHash = createHash('sha256').update(dto.token).digest('hex');
 
-    const user = await this.prisma.user.findFirst({
-      where: { emailVerifyToken: resetTokenHash },
-    });
+    const user = await this.authRepository.findUserByResetToken(resetTokenHash);
     if (!user) {
       throw new BadRequestException('Invalid or expired reset token');
     }
@@ -376,17 +352,12 @@ export class AuthService {
     const passwordHash = await argon2.hash(dto.password);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: user.id },
-        data: {
-          passwordHash,
-          emailVerifyToken: null,
-          updatedAt: new Date(),
-        },
-      });
-      await tx.session.deleteMany({
-        where: { userId: user.id },
-      });
+      await this.authRepository.updateUser(
+        user.id,
+        { passwordHash, emailVerifyToken: null, updatedAt: new Date() },
+        tx,
+      );
+      await this.authRepository.deleteSessionsByUserId(user.id, tx);
       await tx.auditLog.create({
         data: {
           userId: user.id,
@@ -412,12 +383,10 @@ export class AuthService {
     expiresAt.setSeconds(expiresAt.getSeconds() + this.parseExpiry(refreshExpiresIn));
 
     const hashedRefreshToken = this.hashToken(rawRefreshToken);
-    await this.prisma.session.create({
-      data: {
-        userId,
-        refreshToken: hashedRefreshToken,
-        expiresAt,
-      },
+    await this.authRepository.createSession({
+      userId,
+      refreshToken: hashedRefreshToken,
+      expiresAt,
     });
 
     return {
