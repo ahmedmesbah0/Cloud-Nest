@@ -132,19 +132,17 @@ export class AdminService {
     const vmid = await this.proxmoxService.getNextVmid();
 
     const vm = await this.prisma.$transaction(async (tx: any) => {
-      const vm = await tx.vm.create({
-        data: {
-          userId: dto.userId,
-          name: dto.name,
-          status: 'provisioning',
-          proxmoxId: vmid,
-          nodeId: defaultNode.id,
-          cpuCores: dto.cpuCores,
-          memoryMb: dto.memoryMb,
-          diskGb: dto.diskGb,
-          templateId: dto.templateId,
-        },
-      });
+      const vm = await this.adminRepo.createVm({
+        userId: dto.userId,
+        name: dto.name,
+        status: 'provisioning',
+        proxmoxId: vmid,
+        nodeId: defaultNode.id,
+        cpuCores: dto.cpuCores,
+        memoryMb: dto.memoryMb,
+        diskGb: dto.diskGb,
+        templateId: dto.templateId,
+      }, tx);
 
       await this.poolService.allocateResources({
         poolId: poolId!,
@@ -154,15 +152,9 @@ export class AdminService {
         diskGb: dto.diskGb,
       }, tx);
 
-      const availableIp = await tx.ipAddress.findFirst({
-        where: { isAssigned: false, vmId: null },
-        orderBy: { address: 'asc' },
-      });
+      const availableIp = await this.adminRepo.findAvailableIp(tx);
       if (availableIp) {
-        await tx.ipAddress.update({
-          where: { id: availableIp.id },
-          data: { isAssigned: true, vmId: vm.id },
-        });
+        await this.adminRepo.assignIpToVm(availableIp.id, vm.id, tx);
       }
 
       await tx.auditLog.create({

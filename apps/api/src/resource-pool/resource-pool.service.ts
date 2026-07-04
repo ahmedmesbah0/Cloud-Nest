@@ -134,33 +134,16 @@ export class ResourcePoolService {
     transactionClient?: any,
   ): Promise<{ success: boolean; message: string }> {
     const doAllocate = async (tx: any) => {
-      const pools: Array<{
-        id: string;
-        totalCores: number;
-        totalMemoryMb: number;
-        totalDiskGb: number;
-        totalIps: number;
-      }> = await tx.$queryRawUnsafe(
-        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb", "totalIps" FROM "ResourcePool" WHERE id = $1 FOR UPDATE`,
-        allocation.poolId,
-      );
+      const pools = await this.poolRepo.lockPoolById(allocation.poolId, tx);
 
       const pool = pools[0];
       if (!pool) {
         throw new BadRequestException('Resource pool not found');
       }
 
-      const allocations: Array<{
-        cores: number;
-        memoryMb: number;
-        diskGb: number;
-        ips: number;
-      }> = await tx.$queryRawUnsafe(
-        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb", COALESCE(SUM(ips), 0) as ips FROM "ResourceAllocation" WHERE "poolId" = $1`,
-        allocation.poolId,
-      );
+      const allocs = await this.poolRepo.sumAllocationsByPool(allocation.poolId, tx);
 
-      const used = allocations[0];
+      const used = allocs[0];
       const availableCores = pool.totalCores - Number(used.cores);
       const availableMemory = pool.totalMemoryMb - Number(used.memoryMb);
       const availableDisk = pool.totalDiskGb - Number(used.diskGb);
@@ -216,26 +199,17 @@ export class ResourcePoolService {
 
   async resizeAllocation(vmId: string, cores: number, memoryMb: number, diskGb: number, vmUserId: string) {
     return this.prisma.$transaction(async (tx: any) => {
-      const poolRows: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number }> = await tx.$queryRawUnsafe(
-        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
-        vmUserId,
-      );
+      const poolRows = await this.poolRepo.lockPoolByUserId(vmUserId, tx);
       const pool = poolRows[0];
       if (!pool) throw new Error('No resource pool found');
 
-      const usage: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
-        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb" FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
-        pool.id, vmId,
-      );
+      const usage = await this.poolRepo.sumAllocationsExcludingVm(pool.id, vmId, tx);
       const used = usage[0];
       const availCores = pool.totalCores - Number(used.cores);
       const availMem = pool.totalMemoryMb - Number(used.memoryMb);
       const availDisk = pool.totalDiskGb - Number(used.diskGb);
 
-      const currentAlloc: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
-        `SELECT cores, "memoryMb", "diskGb" FROM "ResourceAllocation" WHERE "vmId" = $1`,
-        vmId,
-      );
+      const currentAlloc = await this.poolRepo.findAllocationByVm(vmId, tx);
       const old = currentAlloc[0];
       if (old) {
         const cpuDelta = cores - Number(old.cores);

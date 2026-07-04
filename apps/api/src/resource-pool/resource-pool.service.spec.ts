@@ -88,10 +88,50 @@ describe('ResourcePoolService', () => {
           }
         }
       }),
+      updateAllocation: jest.fn(async (vmId: string, data: any, _tx?: any) => {
+        for (const alloc of store.allocations.values()) {
+          if ((alloc as any).vmId === vmId) {
+            Object.assign(alloc, data);
+            return alloc;
+          }
+        }
+      }),
+      lockPoolById: jest.fn(async (poolId: string, _tx?: any) => {
+        const pool = store.pools.get(poolId);
+        return pool ? [{ id: pool.id, totalCores: pool.totalCores, totalMemoryMb: pool.totalMemoryMb, totalDiskGb: pool.totalDiskGb, totalIps: pool.totalIps ?? 0 }] : [];
+      }),
+      sumAllocationsByPool: jest.fn(async (poolId: string, _tx?: any) => {
+        const allocs = Array.from(store.allocations.values()).filter((a: any) => a.poolId === poolId);
+        return [{
+          cores: allocs.reduce((s: number, a: any) => s + Number(a.cores), 0),
+          memoryMb: allocs.reduce((s: number, a: any) => s + Number(a.memoryMb), 0),
+          diskGb: allocs.reduce((s: number, a: any) => s + Number(a.diskGb), 0),
+          ips: allocs.reduce((s: number, a: any) => s + Number(a.ips ?? 0), 0),
+        }];
+      }),
+      lockPoolByUserId: jest.fn(async (userId: string, _tx?: any) => {
+        for (const pool of store.pools.values()) {
+          if ((pool as any).userId === userId) return [{ id: pool.id, totalCores: pool.totalCores, totalMemoryMb: pool.totalMemoryMb, totalDiskGb: pool.totalDiskGb }];
+        }
+        return [];
+      }),
+      sumAllocationsExcludingVm: jest.fn(async (poolId: string, vmId: string, _tx?: any) => {
+        const allocs = Array.from(store.allocations.values()).filter((a: any) => a.poolId === poolId && a.vmId !== vmId);
+        return [{
+          cores: allocs.reduce((s: number, a: any) => s + Number(a.cores), 0),
+          memoryMb: allocs.reduce((s: number, a: any) => s + Number(a.memoryMb), 0),
+          diskGb: allocs.reduce((s: number, a: any) => s + Number(a.diskGb), 0),
+        }];
+      }),
+      findAllocationByVm: jest.fn(async (vmId: string, _tx?: any) => {
+        for (const alloc of store.allocations.values()) {
+          if ((alloc as any).vmId === vmId) return [{ cores: alloc.cores, memoryMb: alloc.memoryMb, diskGb: alloc.diskGb }];
+        }
+        return [];
+      }),
     };
 
     mockPrisma = {
-      $queryRawUnsafe: jest.fn(),
       auditLog: { create: jest.fn().mockResolvedValue({}) },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
@@ -150,13 +190,6 @@ describe('ResourcePoolService', () => {
         totalDiskGb: 100,
       });
 
-      mockPrisma.$queryRawUnsafe.mockResolvedValueOnce([
-        { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
-      ]);
-      mockPrisma.$queryRawUnsafe.mockResolvedValueOnce([
-        { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 },
-      ]);
-
       const result = await service.allocateResources({
         poolId: pool.id,
         vmId: 'vm-1',
@@ -177,13 +210,6 @@ describe('ResourcePoolService', () => {
         totalDiskGb: 50,
       });
 
-      mockPrisma.$queryRawUnsafe.mockResolvedValueOnce([
-        { id: pool.id, totalCores: 2, totalMemoryMb: 4096, totalDiskGb: 50, totalIps: 0 },
-      ]);
-      mockPrisma.$queryRawUnsafe.mockResolvedValueOnce([
-        { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 },
-      ]);
-
       await expect(
         service.allocateResources({
           poolId: pool.id,
@@ -196,8 +222,6 @@ describe('ResourcePoolService', () => {
     });
 
     it('rejects allocation when pool does not exist', async () => {
-      mockPrisma.$queryRawUnsafe.mockResolvedValueOnce([]);
-
       await expect(
         service.allocateResources({
           poolId: 'nonexistent',
@@ -217,14 +241,6 @@ describe('ResourcePoolService', () => {
         totalDiskGb: 100,
       });
 
-      mockPrisma.$queryRawUnsafe
-        .mockResolvedValueOnce([
-          { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
-        ])
-        .mockResolvedValueOnce([
-          { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 },
-        ]);
-
       await service.allocateResources({
         poolId: pool.id,
         vmId: 'vm-1',
@@ -232,23 +248,6 @@ describe('ResourcePoolService', () => {
         memoryMb: 4096,
         diskGb: 50,
       });
-
-      mockAllocation(pool.id, {
-        vmId: 'vm-1',
-        poolId: pool.id,
-        cores: 2,
-        memoryMb: 4096,
-        diskGb: 50,
-        ips: 0,
-      });
-
-      mockPrisma.$queryRawUnsafe
-        .mockResolvedValueOnce([
-          { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
-        ])
-        .mockResolvedValueOnce([
-          { cores: 2, memoryMb: 4096, diskGb: 50, ips: 0 },
-        ]);
 
       const result = await service.allocateResources({
         poolId: pool.id,
@@ -258,14 +257,6 @@ describe('ResourcePoolService', () => {
         diskGb: 50,
       });
       expect(result.success).toBe(true);
-
-      mockPrisma.$queryRawUnsafe
-        .mockResolvedValueOnce([
-          { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
-        ])
-        .mockResolvedValueOnce([
-          { cores: 4, memoryMb: 8192, diskGb: 100, ips: 0 },
-        ]);
 
       await expect(
         service.allocateResources({
@@ -297,15 +288,6 @@ describe('ResourcePoolService', () => {
           throw new Error('duplicate key — already allocated');
         }
         return origCreateAllocation(data, _tx);
-      });
-
-      mockPrisma.$transaction = jest.fn(async (fn: any) => {
-        return fn({
-          ...mockPrisma,
-          $queryRawUnsafe: jest.fn()
-            .mockResolvedValueOnce([{ id: pool.id, totalCores: 2, totalMemoryMb: 4096, totalDiskGb: 50, totalIps: 0 }])
-            .mockResolvedValueOnce([{ cores: 0, memoryMb: 0, diskGb: 0, ips: 0 }]),
-        });
       });
 
       const req1 = service.allocateResources({

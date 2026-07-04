@@ -367,6 +367,29 @@ export class AdminRepository {
     return this.db(tx).supportTicket.update({ where: { id }, data });
   }
 
+  // --- VM ---
+  async createVm(data: {
+    userId: string; name: string; status: string; proxmoxId: number;
+    nodeId: string; cpuCores: number; memoryMb: number; diskGb: number; templateId: string;
+  }, tx?: PrismaTx) {
+    return this.db(tx).vm.create({ data });
+  }
+
+  // --- IP Address ---
+  async findAvailableIp(tx?: PrismaTx) {
+    return this.db(tx).ipAddress.findFirst({
+      where: { isAssigned: false, vmId: null },
+      orderBy: { address: 'asc' },
+    });
+  }
+
+  async assignIpToVm(ipId: string, vmId: string, tx?: PrismaTx) {
+    return this.db(tx).ipAddress.update({
+      where: { id: ipId },
+      data: { isAssigned: true, vmId },
+    });
+  }
+
   // --- Notification ---
   async createNotification(data: Record<string, unknown>, tx?: PrismaTx) {
     return this.db(tx).notification.create({ data });

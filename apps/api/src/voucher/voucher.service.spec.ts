@@ -3,11 +3,13 @@ import { BadRequestException } from '@nestjs/common';
 import { VoucherService } from './voucher.service';
 import { VoucherRepository } from './voucher.repository';
 import { PrismaService } from '../prisma/prisma.service';
+import { WalletService } from '../wallet/wallet.service';
 
 describe('VoucherService', () => {
   let service: VoucherService;
   let mockRepo: any;
   let mockPrisma: any;
+  let mockWalletService: any;
 
   const store = {
     vouchers: new Map<string, any>(),
@@ -73,30 +75,19 @@ describe('VoucherService', () => {
     };
 
     mockPrisma = {
-      wallet: {
-        findUnique: jest.fn(({ where }: any) => store.wallets.get(where.userId) ?? null),
-        upsert: jest.fn(({ where, create, update }: any) => {
-          const existing = store.wallets.get(where.userId);
-          if (existing) {
-            existing.balance += (update.balance as any).increment || 0;
-            return existing;
-          }
-          const w = { id: `w-${where.userId}`, ...create };
-          store.wallets.set(where.userId, w);
-          return w;
-        }),
-      },
-      transaction: {
-        create: jest.fn(({ data }: any) => {
-          const t = { id: `tx-${store.transactions.size + 1}`, ...data };
-          store.transactions.set(t.id, t);
-          return t;
-        }),
-      },
       auditLog: {
         create: jest.fn(({ data }: any) => ({ id: `log-${Date.now()}`, ...data })),
       },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
+    };
+
+    mockWalletService = {
+      credit: jest.fn(async (_userId: string, amount: number, _ref?: string, _meta?: any) => {
+        const w = store.wallets.get(_userId) ?? { id: `w-${_userId}`, userId: _userId, balance: 0 };
+        w.balance += amount;
+        store.wallets.set(_userId, w);
+        return { id: `tx-${store.transactions.size + 1}`, walletId: w.id, amount, type: 'credit' };
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -104,6 +95,7 @@ describe('VoucherService', () => {
         VoucherService,
         { provide: VoucherRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: WalletService, useValue: mockWalletService },
       ],
     }).compile();
 
@@ -137,7 +129,7 @@ describe('VoucherService', () => {
       expect(result.message).toContain('1000 cents credited');
       expect(result.amount).toBe(1000);
 
-      expect(store.wallets.get('user-1').balance).toBe(1000);
+      expect(mockWalletService.credit).toHaveBeenCalledWith('user-1', 1000, 'voucher:GET10', { voucherId: expect.any(String) });
     });
 
     it('rejects invalid code', async () => {
@@ -188,13 +180,11 @@ describe('VoucherService', () => {
       });
     });
 
-    it('redeemVoucher writes audit log inside $transaction', async () => {
+    it('redeemVoucher delegates credit to WalletService', async () => {
       await service.createVoucher({ amount: 500, code: 'REDEEMLOG' });
-      mockPrisma.auditLog.create.mockClear();
+      mockWalletService.credit.mockClear();
       await service.redeemVoucher('user-1', 'REDEEMLOG');
-      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ action: 'voucher.redeem', resource: 'voucher' }),
-      });
+      expect(mockWalletService.credit).toHaveBeenCalledWith('user-1', 500, 'voucher:REDEEMLOG', expect.any(Object));
     });
 
     it('deactivateVoucher writes audit log inside $transaction', async () => {

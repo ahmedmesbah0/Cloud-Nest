@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { VoucherRepository } from './voucher.repository';
+import { WalletService } from '../wallet/wallet.service';
 import { randomBytes } from 'node:crypto';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class VoucherService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly voucherRepo: VoucherRepository,
+    private readonly walletService: WalletService,
   ) {}
 
   async createVoucher(data: {
@@ -71,40 +73,12 @@ export class VoucherService {
     const alreadyRedeemed = await this.voucherRepo.findRedemption(voucher.id, userId);
     if (alreadyRedeemed) throw new BadRequestException('Voucher already redeemed by this user');
 
-    return this.prisma.$transaction(async (tx: any) => {
-      await this.voucherRepo.update(voucher.id, { currentRedemptions: { increment: 1 } }, tx);
-      await this.voucherRepo.createRedemption({ voucherId: voucher.id, userId }, tx);
+    await this.voucherRepo.update(voucher.id, { currentRedemptions: { increment: 1 } });
+    await this.voucherRepo.createRedemption({ voucherId: voucher.id, userId });
 
-      await tx.wallet.upsert({
-        where: { userId },
-        create: { userId, balance: voucher.amount },
-        update: { balance: { increment: voucher.amount } },
-      });
+    await this.walletService.credit(userId, voucher.amount, `voucher:${code}`, { voucherId: voucher.id });
 
-      const wallet = await tx.wallet.findUnique({ where: { userId } });
-
-      await tx.transaction.create({
-        data: {
-          walletId: wallet!.id,
-          amount: voucher.amount,
-          type: 'credit',
-          reference: `voucher:${code}`,
-          metadata: { voucherId: voucher.id },
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: 'voucher.redeem',
-          resource: 'voucher',
-          resourceId: voucher.id,
-          metadata: { code, amount: voucher.amount } as any,
-        },
-      });
-
-      return { message: `Voucher redeemed: ${voucher.amount} cents credited`, amount: voucher.amount };
-    });
+    return { message: `Voucher redeemed: ${voucher.amount} cents credited`, amount: voucher.amount };
   }
 
   async deactivateVoucher(id: string, userId?: string) {
