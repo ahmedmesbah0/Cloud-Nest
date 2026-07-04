@@ -6,7 +6,8 @@ import { useAuth } from '@/lib/auth';
 import { useTheme } from 'next-themes';
 import {
   Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
-  LogOut, Menu, X, Moon, Sun, ChevronDown, Key, Terminal, Shield,
+  LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Key, Terminal, Shield,
+  Users, Settings, FileText, UserCheck, HardDrive,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -20,6 +21,16 @@ const navItems = [
   { href: '/dashboard/support', label: 'Support', icon: LifeBuoy },
 ];
 
+const adminNavItems = [
+  { href: '/dashboard/admin', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard/admin/users', label: 'Users', icon: Users },
+  { href: '/dashboard/admin/vms', label: 'VMs', icon: Server },
+  { href: '/dashboard/admin/nodes', label: 'Nodes', icon: HardDrive },
+  { href: '/dashboard/admin/settings', label: 'Settings', icon: Settings },
+  { href: '/dashboard/admin/audit-logs', label: 'Audit Logs', icon: FileText },
+  { href: '/dashboard/admin/roles', label: 'Roles', icon: UserCheck },
+];
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -27,6 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { theme, setTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(true);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -84,19 +96,46 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
           {isAdmin && (
             <>
-              <Link
-                href="/dashboard/admin/settings"
-                onClick={() => setSidebarOpen(false)}
+              <button
+                onClick={() => setAdminOpen(!adminOpen)}
                 className={cn(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                  'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm transition-colors',
                   pathname.startsWith('/dashboard/admin')
                     ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
                 )}
               >
-                <Shield className="h-4 w-4" />
-                Admin
-              </Link>
+                <span className="flex items-center gap-3">
+                  <Shield className="h-4 w-4" />
+                  Admin
+                </span>
+                {adminOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+              {adminOpen && (
+                <div className="ml-6 space-y-1">
+                  {adminNavItems.map(({ href, label, icon: Icon }) => {
+                    const active = href === '/dashboard/admin'
+                      ? pathname === '/dashboard/admin'
+                      : pathname.startsWith(href);
+                    return (
+                      <Link
+                        key={href}
+                        href={href}
+                        onClick={() => setSidebarOpen(false)}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm transition-colors',
+                          active
+                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </nav>
