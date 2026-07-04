@@ -89,6 +89,23 @@ export class AdminController {
     return this.adminService.listAllVms(query.page ?? 1, query.limit ?? 50);
   }
 
+  @Get('vms/:id')
+  @ApiOperation({ summary: 'Get VM details (admin)' })
+  async getVm(@Param('id') id: string) {
+    return this.adminService.getAdminVm(id);
+  }
+
+  @Post('vms/:id/action')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Power action on VM (start/stop/restart/shutdown)' })
+  async vmPowerAction(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Body('action') action: 'start' | 'stop' | 'restart' | 'shutdown',
+  ) {
+    return this.adminService.adminPowerAction(adminUserId, id, action);
+  }
+
   @Post('vms/:id/force-stop')
   @ApiOperation({ summary: 'Force stop a VM' })
   async forceStopVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string) {

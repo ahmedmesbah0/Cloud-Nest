@@ -112,6 +112,51 @@ export class AdminService {
     return user;
   }
 
+  async getAdminVm(vmId: string) {
+    const vm = await this.prisma.vm.findUnique({
+      where: { id: vmId },
+      include: {
+        user: { select: { id: true, email: true, name: true } },
+        node: { select: { id: true, name: true, proxmoxNodeId: true } },
+        snapshots: { orderBy: { createdAt: 'desc' } },
+        backups: { orderBy: { createdAt: 'desc' }, take: 20 },
+        _count: { select: { snapshots: true, backups: true } },
+      },
+    });
+    if (!vm) throw new NotFoundException('VM not found');
+    return vm;
+  }
+
+  async adminPowerAction(adminUserId: string, vmId: string, action: 'start' | 'stop' | 'restart' | 'shutdown') {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+
+    if (vm.status !== 'running' && vm.status !== 'stopped') {
+      throw new BadRequestException(`Cannot ${action} VM in ${vm.status} state`);
+    }
+    if (action === 'start' && vm.status === 'running') {
+      throw new BadRequestException('VM is already running');
+    }
+    if ((action === 'stop' || action === 'shutdown') && vm.status === 'stopped') {
+      throw new BadRequestException('VM is already stopped');
+    }
+    if (action === 'restart' && vm.status !== 'running') {
+      throw new BadRequestException('Can only restart a running VM');
+    }
+
+    const jobType = action === 'shutdown' ? 'shutdown-vm' : `${action}-vm`;
+
+    await this.jobService.enqueueJob(jobType as any, {
+      vmId: vm.id,
+      proxmoxId: vm.proxmoxId,
+    }, {
+      userId: adminUserId,
+      auditLog: { action: `admin.vm.${action}`, resource: 'vm', resourceId: vm.id },
+    });
+
+    return { message: `${action} command queued` };
+  }
+
   async listAllVms(page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const [vms, total] = await Promise.all([
