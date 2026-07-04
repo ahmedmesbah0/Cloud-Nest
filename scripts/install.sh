@@ -468,7 +468,13 @@ install_dependencies() {
   log_section "Installing project dependencies"
   cd "$INSTALL_DIR"
   rm -rf "$INSTALL_DIR/apps/web/.next" "$INSTALL_DIR/apps/api/dist" "$INSTALL_DIR/node_modules" 2>/dev/null || true
+  # npm skips devDependencies when NODE_ENV=production, but we need them
+  # (@nestjs/cli, prisma, ts-node, etc.) to build and seed. Temporarily
+  # unset NODE_ENV for the install step.
+  local saved_node_env="${NODE_ENV:-}"
+  unset NODE_ENV
   run_with_retry 3 10 npm install --no-fund --no-audit
+  export NODE_ENV="$saved_node_env"
   ok "Dependencies installed"
 }
 
