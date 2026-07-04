@@ -276,17 +276,25 @@ ensure_postgres() {
     if [ -n "$SUDO" ]; then
       $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
         $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';"
+      # Always sync the password so it matches the DB_PASSWORD we just generated
+      # and wrote to .env. Without this, a re-install leaves the role with the
+      # old password and prisma:push fails with P1000 authentication error.
+      $SUDO -u postgres psql -p "${DB_PORT}" -c "ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';" >/dev/null 2>&1
       $SUDO -u postgres psql -p "${DB_PORT}" -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
         $SUDO -u postgres psql -p "${DB_PORT}" -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
       $SUDO -u postgres psql -p "${DB_PORT}" -c "ALTER ROLE ${DB_USER} WITH SUPERUSER;" >/dev/null 2>&1 || true
       $SUDO -u postgres psql -p "${DB_PORT}" -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null 2>&1 || true
+      # Grant privileges on existing tables in case the DB was created in a prior run
+      $SUDO -u postgres psql -p "${DB_PORT}" -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO ${DB_USER};" >/dev/null 2>&1 || true
     else
       su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 || \
         su postgres -c "psql -p '${DB_PORT}' -c \"CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\""
+      su postgres -c "psql -p '${DB_PORT}' -c \"ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\"" >/dev/null 2>&1
       su postgres -c "psql -p '${DB_PORT}' -tc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 || \
         su postgres -c "psql -p '${DB_PORT}' -c \"CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};\""
       su postgres -c "psql -p '${DB_PORT}' -c \"ALTER ROLE ${DB_USER} WITH SUPERUSER;\"" >/dev/null 2>&1 || true
       su postgres -c "psql -p '${DB_PORT}' -c \"GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};\"" >/dev/null 2>&1 || true
+      su postgres -c "psql -p '${DB_PORT}' -d '${DB_NAME}' -c \"GRANT ALL ON SCHEMA public TO ${DB_USER};\"" >/dev/null 2>&1 || true
     fi
 
     if PGPASSWORD="$DB_PASSWORD" psql -p "${DB_PORT}" "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; then
