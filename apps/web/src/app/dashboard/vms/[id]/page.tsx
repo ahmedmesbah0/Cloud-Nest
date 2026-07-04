@@ -88,8 +88,11 @@ export default function VmDetailPage() {
   const [reinstalling, setReinstalling] = useState(false);
   const [reinstallProgress, setReinstallProgress] = useState('');
 
-  const [createBacking, setCreateBacking] = useState(false);
+  const [showCreateSnapshot, setShowCreateSnapshot] = useState(false);
+  const [snapshotName, setSnapshotName] = useState('');
+  const [snapshotDescription, setSnapshotDescription] = useState('');
   const [creatingSnapshot, setCreatingSnapshot] = useState(false);
+  const [createBacking, setCreateBacking] = useState(false);
   const [backupMode, setBackupMode] = useState<'snapshot' | 'suspend' | 'stop'>('snapshot');
 
   const [selectedTimeframe, setSelectedTimeframe] = useState<'hour' | 'day' | 'week' | 'month' | 'year'>('hour');
@@ -271,13 +274,18 @@ export default function VmDetailPage() {
     }
   };
 
-  const handleCreateSnapshot = async () => {
-    const name = prompt('Snapshot name:');
-    if (!name) return;
+  const handleCreateSnapshot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!snapshotName) return;
     setCreatingSnapshot(true);
     try {
-      await api.post(`/vms/${vm.id}/snapshots`, { name });
+      const body: Record<string, string> = { name: snapshotName };
+      if (snapshotDescription) body.description = snapshotDescription;
+      await api.post(`/vms/${vm.id}/snapshots`, body);
       toast.success('Snapshot creation queued');
+      setShowCreateSnapshot(false);
+      setSnapshotName('');
+      setSnapshotDescription('');
       setTimeout(() => mutateSnapshots(), 2000);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Snapshot failed');
@@ -294,6 +302,16 @@ export default function VmDetailPage() {
       setTimeout(() => mutateSnapshots(), 2000);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Delete failed');
+    }
+  };
+
+  const handleRollbackSnapshot = async (snapshotId: string, name: string) => {
+    if (!confirm(`Rollback VM to snapshot "${name}"? This will stop the VM and revert its disk.`)) return;
+    try {
+      await api.post(`/vms/${vm.id}/snapshots/${snapshotId}/rollback`);
+      toast.success('Snapshot rollback queued');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Rollback failed');
     }
   };
 
@@ -675,11 +693,11 @@ export default function VmDetailPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Snapshots</h2>
           <button
-            onClick={handleCreateSnapshot}
-            disabled={creatingSnapshot || isProvisioning}
+            onClick={() => setShowCreateSnapshot(true)}
+            disabled={isProvisioning}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
           >
-            <Camera className="h-4 w-4" /> {creatingSnapshot ? 'Queuing...' : 'Create Snapshot'}
+            <Camera className="h-4 w-4" /> Create Snapshot
           </button>
         </div>
         {!snapshots || snapshots.length === 0 ? (
@@ -690,6 +708,7 @@ export default function VmDetailPage() {
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-700">
                   <th className="text-left py-2 text-slate-500 font-medium">Name</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Description</th>
                   <th className="text-left py-2 text-slate-500 font-medium">Status</th>
                   <th className="text-left py-2 text-slate-500 font-medium">Created</th>
                   <th className="text-right py-2 text-slate-500 font-medium" />
@@ -699,13 +718,17 @@ export default function VmDetailPage() {
                 {snapshots.map((s: any) => (
                   <tr key={s.id} className="border-b border-slate-100 dark:border-slate-700 last:border-0">
                     <td className="py-2 text-slate-900 dark:text-white">{s.name}</td>
+                    <td className="py-2 text-slate-500 max-w-[200px] truncate">{s.description || '-'}</td>
                     <td className="py-2">
                       <span className={cn('text-xs px-2 py-0.5 rounded-full', snapshotStatusColors[s.status] || '')}>{s.status}</span>
                     </td>
                     <td className="py-2 text-slate-500">{new Date(s.createdAt).toLocaleString()}</td>
                     <td className="py-2 text-right">
                       {s.status === 'created' && (
-                        <button onClick={() => handleDeleteSnapshot(s.id)} className="text-red-500 hover:text-red-700"><Trash className="h-4 w-4" /></button>
+                        <div className="flex gap-1 justify-end">
+                          <button onClick={() => handleRollbackSnapshot(s.id, s.name)} className="text-amber-500 hover:text-amber-700" title="Rollback"><RotateCcw className="h-4 w-4" /></button>
+                          <button onClick={() => handleDeleteSnapshot(s.id)} className="text-red-500 hover:text-red-700" title="Delete"><Trash className="h-4 w-4" /></button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -1007,6 +1030,29 @@ export default function VmDetailPage() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Create Snapshot Modal */}
+      {showCreateSnapshot && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Create Snapshot</h3>
+            <form onSubmit={handleCreateSnapshot} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name</label>
+                <input type="text" value={snapshotName} onChange={(e) => setSnapshotName(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="before-update" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Description (optional)</label>
+                <textarea value={snapshotDescription} onChange={(e) => setSnapshotDescription(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" rows={2} placeholder="Before installing updates" />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowCreateSnapshot(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Cancel</button>
+                <button type="submit" disabled={creatingSnapshot || !snapshotName} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">{creatingSnapshot ? 'Queuing...' : 'Create'}</button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -212,6 +212,17 @@ export class VmController {
     return this.vmService.deleteSnapshot(userId, id, snapshotId);
   }
 
+  @Post(':id/snapshots/:snapshotId/rollback')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rollback VM to a snapshot' })
+  async rollbackSnapshot(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('snapshotId') snapshotId: string,
+  ) {
+    return this.vmService.rollbackSnapshot(userId, id, snapshotId);
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Delete a VM' })
