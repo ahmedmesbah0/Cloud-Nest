@@ -411,7 +411,7 @@ write_env_file() {
   cat > "$env_file" <<EOF
 NODE_ENV=production
 PORT=${API_PORT}
-NEXT_PUBLIC_API_URL=http://${PUBLIC_HOST}:${API_PORT}
+NEXT_PUBLIC_API_URL=http://127.0.0.1:${API_PORT}
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public
 REDIS_URL=redis://localhost:6379
 JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
@@ -496,6 +496,7 @@ build_project() {
   rm -rf "$INSTALL_DIR/apps/web/.next" "$INSTALL_DIR/apps/api/dist" 2>/dev/null || true
   export NODE_ENV=production
   export CI=1
+  export NEXT_PUBLIC_API_URL="http://127.0.0.1:${API_PORT}"
   npm run build
   ok "Build completed"
 }
@@ -556,6 +557,7 @@ start_services() {
   log_section "Starting services"
   cd "$INSTALL_DIR"
   pm2 delete cloudnest-api cloudnest-web >/dev/null 2>&1 || true
+  pm2 cleardump >/dev/null 2>&1 || true
   if ! pm2 start "$INSTALL_DIR/ecosystem.config.cjs" >/dev/null 2>&1; then
     err "PM2 failed to start services"
     pm2 logs cloudnest-api cloudnest-web --lines 20 --nostream 2>&1 | tail -40
@@ -600,7 +602,8 @@ run_health_checks() {
   fi
 
   local login_response
-  login_response="$(curl -sS -X POST "$api_url/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" 2>&1 || true)"
+  # Test login through the web proxy (same path browsers use) to verify the full chain
+  login_response="$(curl -sS -X POST "$web_url/api/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" 2>&1 || true)"
   if [[ "$login_response" == *'"accessToken"'* ]] || [[ "$login_response" == *'"refreshToken"'* ]]; then
     ok "Authentication endpoint responded successfully"
   else
@@ -691,7 +694,9 @@ perform_update() {
   info "Installing dependencies and rebuilding"
   npm install --no-fund --no-audit || true
   npm run build || true
-  pm2 restart cloudnest-api cloudnest-web >/dev/null 2>&1 || pm2 start "$INSTALL_DIR/ecosystem.config.cjs" --env production >/dev/null 2>&1 || true
+  pm2 delete cloudnest-api cloudnest-web >/dev/null 2>&1 || true
+  pm2 cleardump >/dev/null 2>&1 || true
+  pm2 start "$INSTALL_DIR/ecosystem.config.cjs" >/dev/null 2>&1 || true
   pm2 save >/dev/null 2>&1 || true
   ok "Update complete"
 }
