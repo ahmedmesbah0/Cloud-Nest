@@ -610,6 +610,25 @@ export class AdminService {
     return { message: 'Reinstall queued' };
   }
 
+  async adminResizeVm(adminUserId: string, vmId: string, dto: { cpuCores?: number; memoryMb?: number; diskGb?: number }) {
+    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    if (!vm) throw new NotFoundException('VM not found');
+
+    await this.jobService.enqueueJob('resize-vm', {
+      vmId,
+      proxmoxId: vm.proxmoxId,
+      cores: dto.cpuCores ?? vm.cpuCores,
+      memory: dto.memoryMb ?? vm.memoryMb,
+      disk: dto.diskGb ?? vm.diskGb,
+      node: vm.nodeId,
+    }, {
+      userId: adminUserId,
+      auditLog: { action: 'admin.vm.resize', resource: 'vm', resourceId: vmId },
+    });
+
+    return { message: 'Resize queued' };
+  }
+
   // --- Roles CRUD ---
 
   async createRole(adminUserId: string, data: { name: string; description?: string }) {
@@ -752,5 +771,23 @@ export class AdminService {
       data: { userId: adminUserId, action: 'admin.ticket.reopen', resource: 'support-ticket', resourceId: ticketId },
     });
     return { message: 'Ticket reopened' };
+  }
+
+  async broadcastNotification(adminUserId: string, title: string, body: string, targetUserId?: string) {
+    if (targetUserId) {
+      await this.prisma.notification.create({ data: { userId: targetUserId, title, body } });
+    } else {
+      const users = await this.prisma.user.findMany({ select: { id: true } });
+      await this.prisma.notification.createMany({
+        data: users.map(u => ({ userId: u.id, title, body })),
+      });
+    }
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId, action: 'admin.notification.broadcast',
+        resource: 'notification', metadata: { title, targetUserId: targetUserId ?? 'all' } as any,
+      },
+    });
+    return { message: `Notification sent to ${targetUserId ? 'user' : 'all users'}` };
   }
 }

@@ -40,6 +40,11 @@ export default function AdminVmDetailPage() {
   const [showReinstall, setShowReinstall] = useState(false);
   const [reinstallTemplate, setReinstallTemplate] = useState('');
   const [reinstalling, setReinstalling] = useState(false);
+  const [showResize, setShowResize] = useState(false);
+  const [resizeCpu, setResizeCpu] = useState('');
+  const [resizeMem, setResizeMem] = useState('');
+  const [resizeDisk, setResizeDisk] = useState('');
+  const [resizing, setResizing] = useState(false);
 
   const { data: firewall, mutate: mutateFirewall } = useSWR(
     () => params.id ? `/admin/vms/${params.id}/firewall` : null,
@@ -91,6 +96,29 @@ export default function AdminVmDetailPage() {
       toast.error(err.response?.data?.message || 'Reinstall failed');
     } finally {
       setReinstalling(false);
+    }
+  };
+
+  const handleResize = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const dto: Record<string, number> = {};
+    if (resizeCpu) dto.cpuCores = parseInt(resizeCpu);
+    if (resizeMem) dto.memoryMb = parseInt(resizeMem);
+    if (resizeDisk) dto.diskGb = parseInt(resizeDisk);
+    if (Object.keys(dto).length === 0) return;
+    setResizing(true);
+    try {
+      await api.post(`/admin/vms/${params.id}/resize`, dto);
+      toast.success('Resize queued');
+      setShowResize(false);
+      setResizeCpu('');
+      setResizeMem('');
+      setResizeDisk('');
+      setTimeout(() => mutate(), 2000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Resize failed');
+    } finally {
+      setResizing(false);
     }
   };
 
@@ -175,6 +203,7 @@ export default function AdminVmDetailPage() {
           {canStop && <button onClick={() => handlePowerAction('stop')} disabled={powering === 'stop'} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"><SquareStop className="h-4 w-4" /> {powering === 'stop' ? '...' : 'Stop'}</button>}
           {canRestart && <button onClick={() => handlePowerAction('restart')} disabled={powering === 'restart'} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"><RotateCcw className="h-4 w-4" /> {powering === 'restart' ? '...' : 'Restart'}</button>}
           {vm?.status === 'stopped' && <button onClick={() => { setReinstallTemplate(''); setShowReinstall(true); }} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 hover:bg-slate-50">Reinstall</button>}
+          <button onClick={() => { setResizeCpu(''); setResizeMem(''); setResizeDisk(''); setShowResize(true); }} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 hover:bg-slate-50">Resize</button>
           <button onClick={handleForceStop} className="px-3 py-2 text-sm rounded-lg border border-amber-200 dark:border-amber-800 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20">Force Stop</button>
           <button onClick={handleForceDelete} className="px-3 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white">Force Delete</button>
         </div>
@@ -345,6 +374,35 @@ export default function AdminVmDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Resize Modal */}
+      {showResize && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowResize(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Resize VM</h2>
+            <form onSubmit={handleResize}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CPU Cores (current: {vm?.cpuCores ?? '-'})</label>
+                  <input type="number" value={resizeCpu} onChange={e => setResizeCpu(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white" placeholder="Leave empty to keep current" min={1} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Memory MB (current: {vm?.memoryMb ?? '-'})</label>
+                  <input type="number" value={resizeMem} onChange={e => setResizeMem(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white" placeholder="Leave empty to keep current" min={512} step={512} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Disk GB (current: {vm?.diskGb ?? '-'})</label>
+                  <input type="number" value={resizeDisk} onChange={e => setResizeDisk(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white" placeholder="Leave empty to keep current" min={1} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button type="button" onClick={() => setShowResize(false)} className="px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600">Cancel</button>
+                <button type="submit" disabled={resizing || (!resizeCpu && !resizeMem && !resizeDisk)} className="px-3 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">{resizing ? 'Resizing...' : 'Resize'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Reinstall Modal */}
       {showReinstall && (

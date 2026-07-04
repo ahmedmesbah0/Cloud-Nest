@@ -358,4 +358,23 @@ export class AdminController {
   async adminReinstallVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body('templateId') templateId: string) {
     return this.adminService.adminReinstallVm(adminUserId, id, templateId);
   }
+
+  @Post('vms/:id/resize')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resize VM resources (admin)' })
+  async adminResizeVm(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: { cpuCores?: number; memoryMb?: number; diskGb?: number }) {
+    return this.adminService.adminResizeVm(adminUserId, id, dto);
+  }
+
+  @Post('notifications/broadcast')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Broadcast notification to users (admin)' })
+  async broadcastNotification(
+    @CurrentUser('id') adminUserId: string,
+    @Body('title') title: string,
+    @Body('body') body: string,
+    @Body('userId') userId?: string,
+  ) {
+    return this.adminService.broadcastNotification(adminUserId, title, body, userId);
+  }
 }

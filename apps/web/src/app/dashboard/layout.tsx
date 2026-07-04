@@ -37,6 +37,7 @@ const adminNavItems = [
   { href: '/dashboard/admin/roles', label: 'Roles', icon: UserCheck },
   { href: '/dashboard/admin/metrics', label: 'Metrics', icon: BarChart3 },
   { href: '/dashboard/admin/support-tickets', label: 'Support', icon: MessageSquare },
+  { href: '/dashboard/admin/notifications', label: 'Notify', icon: Bell },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
