@@ -572,8 +572,6 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '${WEB_PORT}',
-        # Used by next.config.ts rewrites (server-side) to proxy /api/* to the API.
-        # Use 127.0.0.1 since both run on the same host.
         NEXT_PUBLIC_API_URL: 'http://127.0.0.1:${API_PORT}',
       },
       autorestart: true,
