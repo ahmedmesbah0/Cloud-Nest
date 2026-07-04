@@ -9,21 +9,21 @@ import toast from 'react-hot-toast';
 function Verify2faForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const email = searchParams.get('email') || '';
+  const userId = searchParams.get('userId') || '';
   const [token, setToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const { verify2fa } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
+    if (!userId) {
       toast.error('Session expired. Please login again.');
       router.push('/login');
       return;
     }
     setSubmitting(true);
     try {
-      await verify2fa(email, token);
+      await verify2fa(userId, token);
       router.push('/dashboard');
     } catch (err: any) {
       toast.error(err.response?.data?.message || '2FA verification failed');

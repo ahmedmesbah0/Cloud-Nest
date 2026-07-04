@@ -15,7 +15,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ requires2fa: boolean } | void>;
+  login: (email: string, password: string) => Promise<{ requires2fa: boolean; userId?: string } | void>;
   verify2fa: (userId: string, token: string) => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     const { data } = await api.post('/auth/login', { email, password });
     if (data.requires2fa) {
-      return { requires2fa: true };
+      return { requires2fa: true, userId: data.userId };
     }
     setAccessToken(data.accessToken);
     localStorage.setItem('accessToken', data.accessToken);

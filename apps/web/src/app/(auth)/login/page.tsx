@@ -20,7 +20,7 @@ export default function LoginPage() {
     try {
       const result = await login(email, password);
       if (result?.requires2fa) {
-        router.push(`/verify-2fa?email=${encodeURIComponent(email)}`);
+        router.push(`/verify-2fa?userId=${encodeURIComponent(result.userId!)}`);
       } else {
         router.push('/dashboard');
       }

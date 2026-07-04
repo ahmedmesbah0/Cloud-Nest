@@ -104,6 +104,26 @@ export class AuthService {
     return this.generateTokens(user.id, user.email);
   }
 
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        emailVerified: true,
+        totpEnabled: true,
+        roles: {
+          select: { role: { select: { name: true } } },
+        },
+      },
+    });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    return user;
+  }
+
   async verify2fa(userId: string, dto: Verify2faDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.totpEnabled || !user.totpSecret) {
