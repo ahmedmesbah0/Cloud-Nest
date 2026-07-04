@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, ForbiddenException, NotFoundException 
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
-import { randomUUID } from 'node:crypto';
+import { ProxmoxService } from '../proxmox/proxmox.service';
 
 @Injectable()
 export class VmService {
@@ -10,7 +10,15 @@ export class VmService {
     private readonly prisma: PrismaService,
     private readonly jobService: ProxmoxJobService,
     private readonly poolService: ResourcePoolService,
+    private readonly proxmox: ProxmoxService,
   ) {}
+
+  async listTemplates() {
+    return this.prisma.vmTemplate.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+  }
 
   async createVm(userId: string, dto: {
     name: string;
@@ -145,7 +153,7 @@ export class VmService {
   async resizeVm(userId: string, vmId: string, dto: { cpuCores?: number; memoryMb?: number; diskGb?: number }) {
     const vm = await this.getVm(vmId, userId);
 
-    return this.prisma.$transaction(async (tx: any) => {
+    const updatedVm = await this.prisma.$transaction(async (tx: any) => {
       const pools: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number; totalIps: number }> = await tx.$queryRawUnsafe(
         `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb", "totalIps" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
         userId,
@@ -215,6 +223,18 @@ export class VmService {
 
       return updatedVm;
     });
+
+    await this.jobService.enqueueJob('resize-vm', {
+      vmId,
+      proxmoxId: vm.proxmoxId,
+      cores: dto.cpuCores ?? vm.cpuCores,
+      memory: dto.memoryMb ?? vm.memoryMb,
+    }, {
+      userId,
+      auditLog: { action: 'vm.resize.proxmox', resource: 'vm', resourceId: vmId },
+    });
+
+    return updatedVm;
   }
 
   async reinstallVm(userId: string, vmId: string, templateId: string) {
@@ -222,24 +242,60 @@ export class VmService {
     const template = await this.prisma.vmTemplate.findUnique({ where: { id: templateId } });
     if (!template) throw new BadRequestException('Template not found');
 
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'vm.reinstall',
-        resource: 'vm',
-        resourceId: vmId,
-        metadata: { oldTemplateId: vm.templateId, newTemplateId: templateId },
-      },
+    await this.jobService.enqueueJob('reinstall-vm', {
+      vmId,
+      proxmoxId: vm.proxmoxId,
+      templateVmid: Number(template.proxmoxTemplateId),
+    }, {
+      userId,
+      auditLog: { action: 'vm.reinstall', resource: 'vm', resourceId: vmId },
     });
 
     return { message: 'Reinstall queued' };
   }
 
-  async getVncUrl(userId: string, vmId: string): Promise<{ url: string; expiresAt: Date }> {
-    await this.getVm(vmId, userId);
+  async mountIso(userId: string, vmId: string, iso: string, storage?: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (vm.status !== 'stopped') {
+      throw new BadRequestException('VM must be stopped to mount an ISO');
+    }
 
-    const expiresAt = new Date(Date.now() + 300000);
-    const token = randomUUID();
+    await this.jobService.enqueueJob('mount-iso', {
+      vmId,
+      proxmoxId: vm.proxmoxId,
+      iso,
+      storage,
+    }, {
+      userId,
+      auditLog: { action: 'vm.mount-iso', resource: 'vm', resourceId: vmId },
+    });
+
+    return { message: 'ISO mount queued' };
+  }
+
+  async ejectIso(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (vm.status !== 'stopped') {
+      throw new BadRequestException('VM must be stopped to eject an ISO');
+    }
+
+    await this.jobService.enqueueJob('eject-iso', {
+      vmId,
+      proxmoxId: vm.proxmoxId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.eject-iso', resource: 'vm', resourceId: vmId },
+    });
+
+    return { message: 'ISO eject queued' };
+  }
+
+  async getVncUrl(userId: string, vmId: string): Promise<{ host: string; port: string; ticket: string; cert: string }> {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+    if (vm.status !== 'running') throw new BadRequestException('VM must be running for console access');
+
+    const vncInfo = await this.proxmox.getVncTicket(vm.proxmoxId);
 
     await this.prisma.auditLog.create({
       data: {
@@ -247,13 +303,10 @@ export class VmService {
         action: 'vm.console',
         resource: 'vm',
         resourceId: vmId,
-        metadata: { expiresAt: expiresAt.toISOString() },
+        metadata: { timestamp: new Date().toISOString() },
       },
     });
 
-    return {
-      url: `/api/vms/${vmId}/console?token=${token}`,
-      expiresAt,
-    };
+    return { ...vncInfo, host: process.env.PROXMOX_HOST || '172.16.1.10' };
   }
 }

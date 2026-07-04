@@ -69,6 +69,17 @@ export class ReinstallVmDto {
   templateId!: string;
 }
 
+export class MountIsoDto {
+  @ApiProperty({ description: 'ISO filename (e.g. ubuntu-24.04.iso)' })
+  @IsString()
+  iso!: string;
+
+  @ApiPropertyOptional({ description: 'Storage pool where ISO is stored' })
+  @IsOptional()
+  @IsString()
+  storage?: string;
+}
+
 export class VmResponseDto {
   @ApiProperty()
   id!: string;

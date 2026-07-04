@@ -13,6 +13,7 @@ enum VmStatus {
   suspended
   provisioning
   error
+  deleted
 }
 
 enum VmPowerAction {

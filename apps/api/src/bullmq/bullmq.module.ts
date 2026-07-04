@@ -1,12 +1,14 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { ProxmoxJobService } from './proxmox-job.service';
 import { ProxmoxJobConsumer } from './proxmox-job.consumer';
+import { VmModule } from '../vms/vm.module';
 
 @Global()
 @Module({
   imports: [
+    forwardRef(() => VmModule),
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: {

@@ -13,6 +13,7 @@ const fetcher = (url: string) => api.get(url).then((r) => r.data);
 export default function NewVmPage() {
   const router = useRouter();
   const { data: pools } = useSWR('/resource-pools', fetcher);
+  const { data: templates } = useSWR('/vms/templates', fetcher);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     name: '',
@@ -20,12 +21,17 @@ export default function NewVmPage() {
     memoryMb: 1024,
     diskGb: 10,
     poolId: '',
+    templateId: '',
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.poolId) {
       toast.error('Please select a resource pool');
+      return;
+    }
+    if (!form.templateId) {
+      toast.error('Please select a template');
       return;
     }
     setSubmitting(true);
@@ -59,6 +65,21 @@ export default function NewVmPage() {
               className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="my-vm"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Template</label>
+            <select
+              value={form.templateId}
+              onChange={(e) => setForm({ ...form, templateId: e.target.value })}
+              className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            >
+              <option value="">Select a template...</option>
+              {(templates || []).map((t: any) => (
+                <option key={t.id} value={t.id}>{t.name} ({t.osType})</option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-3 gap-4">

@@ -4,6 +4,7 @@ import { VmService } from './vm.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
+import { ProxmoxService } from '../proxmox/proxmox.service';
 
 describe('VmService', () => {
   let service: VmService;
@@ -46,6 +47,10 @@ describe('VmService', () => {
     mockPoolService = {
       getPoolAvailable: jest.fn().mockResolvedValue({ cores: 10, memoryMb: 20000, diskGb: 500, ips: 5 }),
       allocateResources: jest.fn().mockResolvedValue({ success: true, message: 'allocated' }),
+    };
+
+    const mockProxmoxService = {
+      getVncTicket: jest.fn().mockResolvedValue({ ticket: 'vnctoken123', port: '5900', cert: 'testcert' }),
     };
 
     const mockTx = {
@@ -143,6 +148,7 @@ describe('VmService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ProxmoxJobService, useValue: mockJobService },
         { provide: ResourcePoolService, useValue: mockPoolService },
+        { provide: ProxmoxService, useValue: mockProxmoxService },
       ],
     }).compile();
 
@@ -321,12 +327,13 @@ describe('VmService', () => {
   });
 
   describe('getVncUrl', () => {
-    it('returns a VNC URL with expiry', async () => {
-      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+    it('returns VNC connection info', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
 
       const result = await service.getVncUrl('user-1', 'vm-1');
-      expect(result.url).toContain('/api/vms/vm-1/console?token=');
-      expect(result.expiresAt).toBeInstanceOf(Date);
+      expect(result.host).toBeTruthy();
+      expect(result.port).toBe('5900');
+      expect(result.ticket).toBeTruthy();
       expect(store.auditLogs.size).toBe(1);
     });
   });

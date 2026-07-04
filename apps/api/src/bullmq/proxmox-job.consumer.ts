@@ -3,7 +3,21 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
+import { VmGateway } from '../vms/vm.gateway';
 import { ProxmoxJobData, ProxmoxJobType } from './proxmox-job.service';
+
+type VmStatus = 'running' | 'stopped' | 'suspended' | 'provisioning' | 'error' | 'deleted';
+
+const JOB_STATUS_MAP: Partial<Record<ProxmoxJobType, VmStatus>> = {
+  'create-vm': 'running',
+  'start-vm': 'running',
+  'stop-vm': 'stopped',
+  'shutdown-vm': 'stopped',
+  'restart-vm': 'running',
+  'suspend-vm': 'suspended',
+  'resume-vm': 'running',
+  'delete-vm': 'deleted',
+};
 
 @Processor('proxmox-jobs', {
   concurrency: 3,
@@ -14,6 +28,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly proxmox: ProxmoxService,
+    private readonly vmGateway: VmGateway,
   ) {
     super();
   }
@@ -35,12 +50,39 @@ export class ProxmoxJobConsumer extends WorkerHost {
     }
 
     try {
+      const vmId = payload.vmId as string | undefined;
       const result = await this.executeJob(type, payload);
 
       await this.prisma.idempotencyKey.update({
         where: { key: idempotencyKey },
         data: { status: 'completed', completedAt: new Date() },
       });
+
+      const newStatus = JOB_STATUS_MAP[type];
+      if (vmId && newStatus) {
+        const updateData: Record<string, unknown> = { status: newStatus };
+        if (type === 'create-vm' && payload.vmid) {
+          updateData.proxmoxId = payload.vmid;
+          if (payload.node) updateData.nodeId = payload.node;
+        }
+        await this.prisma.vm.update({
+          where: { id: vmId },
+          data: updateData,
+        });
+
+        this.vmGateway.emitVmStatusUpdate(vmId, newStatus, {
+          jobType: type,
+          ...(payload.vmid ? { proxmoxId: payload.vmid as number } : {}),
+        });
+
+        if (userId) {
+          this.vmGateway.emitUserNotification(userId, 'vm-notification', {
+            vmId,
+            message: `VM ${newStatus}`,
+            type,
+          });
+        }
+      }
 
       if (auditLog && userId) {
         await this.prisma.auditLog.create({
@@ -57,6 +99,15 @@ export class ProxmoxJobConsumer extends WorkerHost {
       return result;
     } catch (error) {
       this.logger.error(`Job ${idempotencyKey} failed: ${(error as Error).message}`);
+
+      const vmId = payload.vmId as string | undefined;
+      if (vmId) {
+        await this.prisma.vm.update({
+          where: { id: vmId },
+          data: { status: 'error' },
+        }).catch(() => {});
+        this.vmGateway.emitVmStatusUpdate(vmId, 'error', { error: (error as Error).message });
+      }
 
       if (job.attemptsMade >= (job.opts?.attempts ?? 5) - 1) {
         await this.prisma.idempotencyKey.update({
@@ -141,6 +192,38 @@ export class ProxmoxJobConsumer extends WorkerHost {
             mode: payload.mode as 'snapshot' | 'suspend' | 'stop' | undefined,
             compress: payload.compress as 'lzo' | 'gzip' | 'zstd' | undefined,
           },
+          node,
+        );
+
+      case 'resize-vm':
+        return this.proxmox.updateVmConfig(
+          payload.vmid as number,
+          {
+            cores: payload.cores as number,
+            memory: payload.memory as number,
+          },
+          node,
+        );
+
+      case 'reinstall-vm':
+        return this.proxmox.cloneVm(
+          payload.templateVmid as number,
+          payload.vmid as number,
+          { full: 1 },
+          node,
+        );
+
+      case 'mount-iso':
+        return this.proxmox.mountIso(
+          payload.vmid as number,
+          payload.iso as string,
+          { storage: payload.storage as string | undefined },
+          node,
+        );
+
+      case 'eject-iso':
+        return this.proxmox.ejectIso(
+          payload.vmid as number,
           node,
         );
 

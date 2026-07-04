@@ -16,7 +16,11 @@ export type ProxmoxJobType =
   | 'create-snapshot'
   | 'delete-snapshot'
   | 'backup-vm'
-  | 'clone-vm';
+  | 'clone-vm'
+  | 'resize-vm'
+  | 'reinstall-vm'
+  | 'mount-iso'
+  | 'eject-iso';
 
 export interface ProxmoxJobData {
   type: ProxmoxJobType;

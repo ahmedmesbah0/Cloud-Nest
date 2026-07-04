@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VmService } from './vm.service';
-import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto } from './dto/vm.dto';
+import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto } from './dto/vm.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
@@ -22,6 +22,12 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 @Controller('vms')
 export class VmController {
   constructor(private readonly vmService: VmService) {}
+
+  @Get('templates')
+  @ApiOperation({ summary: 'List available VM templates' })
+  async listTemplates() {
+    return this.vmService.listTemplates();
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create a new VM' })
@@ -72,9 +78,25 @@ export class VmController {
   }
 
   @Get(':id/console')
-  @ApiOperation({ summary: 'Get VNC console URL' })
+  @ApiOperation({ summary: 'Get VNC console details' })
   async console(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.vmService.getVncUrl(userId, id);
+  }
+
+  @Post(':id/mount-iso')
+  @ApiOperation({ summary: 'Mount an ISO image' })
+  async mountIso(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: MountIsoDto,
+  ) {
+    return this.vmService.mountIso(userId, id, dto.iso, dto.storage);
+  }
+
+  @Post(':id/eject-iso')
+  @ApiOperation({ summary: 'Eject the mounted ISO' })
+  async ejectIso(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.ejectIso(userId, id);
   }
 
   @Delete(':id')

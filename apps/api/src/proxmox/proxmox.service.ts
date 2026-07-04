@@ -318,4 +318,34 @@ export class ProxmoxService implements OnModuleInit {
     if (options?.compress) body.compress = options.compress;
     return this.post<string>(`/nodes/${node}/vzdump`, body);
   }
+
+  async updateVmConfig(
+    vmid: number,
+    config: Record<string, unknown>,
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/config`, config);
+  }
+
+  async mountIso(
+    vmid: number,
+    iso: string,
+    options?: { storage?: string },
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    const body: Record<string, unknown> = {
+      ide2: `${options?.storage ?? 'local'}:iso/${iso},media=cdrom`,
+    };
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/config`, body);
+  }
+
+  async ejectIso(
+    vmid: number,
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    const body: Record<string, unknown> = {
+      ide2: 'none,media=cdrom',
+    };
+    return this.post<string>(`/nodes/${node}/qemu/${vmid}/config`, body);
+  }
 }
