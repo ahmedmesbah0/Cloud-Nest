@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { BillingService } from './billing.service';
+import { PaginationDto } from './dto/billing.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../admin/admin.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -40,14 +41,11 @@ export class BillingController {
 
   @Get('invoices')
   @ApiOperation({ summary: 'List invoices for the current user' })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
   async listInvoices(
     @CurrentUser('id') userId: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query() query: PaginationDto,
   ) {
-    return this.billingService.listInvoices(userId, Number(page) || 1, Number(limit) || 20);
+    return this.billingService.listInvoices(userId, query.page ?? 1, query.limit ?? 20);
   }
 
   @Get('invoices/:id')

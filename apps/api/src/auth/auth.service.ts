@@ -138,9 +138,14 @@ export class AuthService {
     return this.generateTokens(user.id, user.email);
   }
 
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
   async refreshToken(refreshToken: string) {
+    const hashed = this.hashToken(refreshToken);
     const session = await this.prisma.session.findUnique({
-      where: { refreshToken },
+      where: { refreshToken: hashed },
     });
     if (!session || session.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
@@ -157,8 +162,9 @@ export class AuthService {
   }
 
   async logout(refreshToken: string) {
+    const hashed = this.hashToken(refreshToken);
     await this.prisma.session.deleteMany({
-      where: { refreshToken },
+      where: { refreshToken: hashed },
     });
     return { message: 'Logged out successfully' };
   }
@@ -286,10 +292,11 @@ export class AuthService {
     const expiresAt = new Date();
     expiresAt.setSeconds(expiresAt.getSeconds() + this.parseExpiry(refreshExpiresIn));
 
+    const hashedRefreshToken = this.hashToken(rawRefreshToken);
     await this.prisma.session.create({
       data: {
         userId,
-        refreshToken: rawRefreshToken,
+        refreshToken: hashedRefreshToken,
         expiresAt,
       },
     });

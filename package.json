@@ -18,7 +18,9 @@
     "prisma:generate": "prisma generate --config prisma.config.ts",
     "prisma:migrate": "prisma migrate dev --config prisma.config.ts",
     "prisma:push": "prisma db push --config prisma.config.ts",
-    "prisma:studio": "prisma studio --config prisma.config.ts"
+    "prisma:studio": "prisma studio --config prisma.config.ts",
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix"
   },
   "devDependencies": {
     "eslint-config-next": "^16.2.10",

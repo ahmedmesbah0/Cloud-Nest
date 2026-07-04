@@ -14,7 +14,25 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableShutdownHooks();
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameSrc: ["'none'"],
+      },
+    },
+    strictTransportSecurity: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  }));
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
