@@ -41,7 +41,7 @@
     "jest-environment-jsdom": "^30.4.1",
     "tailwindcss": "^4.0.0",
     "ts-jest": "^29.4.11",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.3",
     "whatwg-fetch": "^3.6.20"
   }
 }
