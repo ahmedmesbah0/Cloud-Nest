@@ -9,7 +9,7 @@ import { Socket, Server } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ProxmoxService } from '../proxmox/proxmox.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { VmService } from './vm.service';
 import WebSocket from 'ws';
 
 interface VncProxyState {
@@ -29,7 +29,7 @@ export class VncProxyGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     private readonly jwtService: JwtService,
     private readonly proxmox: ProxmoxService,
-    private readonly prisma: PrismaService,
+    private readonly vmService: VmService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -52,8 +52,10 @@ export class VncProxyGateway implements OnGatewayConnection, OnGatewayDisconnect
       return;
     }
 
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
-    if (!vm || vm.userId !== userId) {
+    let vm: { proxmoxId: number | null };
+    try {
+      vm = await this.vmService.getVm(vmId, userId);
+    } catch {
       client.emit('error', 'VM not found or not yours');
       client.disconnect();
       return;
