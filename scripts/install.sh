@@ -474,22 +474,6 @@ setup_prisma() {
   ok "Prisma schema is ready"
 }
 
-seed_admin_account() {
-  log_section "Creating administrator account"
-  cd "$INSTALL_DIR"
-
-  if [ -z "${ADMIN_EMAIL:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; then
-    err "ADMIN_EMAIL or ADMIN_PASSWORD is not set; cannot create admin account"
-    return 1
-  fi
-
-  ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npm run seed:admin -w apps/api || {
-    err "Admin seeding failed"
-    return 1
-  }
-  ok "Administrator account ready: $ADMIN_EMAIL"
-}
-
 build_project() {
   log_section "Building application"
   cd "$INSTALL_DIR"
@@ -601,18 +585,6 @@ run_health_checks() {
     return 1
   fi
 
-  local login_response
-  # Test login through the web proxy (same path browsers use) to verify the full chain
-  login_response="$(curl -sS -X POST "$web_url/api/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" 2>&1 || true)"
-  if [[ "$login_response" == *'"accessToken"'* ]] || [[ "$login_response" == *'"refreshToken"'* ]]; then
-    ok "Authentication endpoint responded successfully"
-  else
-    warn "Authentication validation returned an unexpected response (system is running, login may need verification)"
-    info "Login response: $login_response"
-    info "Admin email: $ADMIN_EMAIL"
-    info "API URL: $api_url"
-  fi
-
   local psql_conn
   psql_conn="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
   if ! psql "$psql_conn" -c 'SELECT 1' >/dev/null 2>&1; then
@@ -636,8 +608,6 @@ print_summary() {
   echo ""
   echo -e "URL: ${CYAN}http://${PUBLIC_HOST}:${WEB_PORT}${NC}"
   echo -e "API: ${CYAN}http://${PUBLIC_HOST}:${API_PORT}${NC}"
-  echo -e "Admin Email: ${CYAN}${ADMIN_EMAIL}${NC}"
-  echo -e "Admin Password: ${CYAN}${ADMIN_PASSWORD}${NC}"
   echo ""
   echo -e "Status:"
   echo -e "  ${GREEN}✓${NC} PostgreSQL"
@@ -646,7 +616,10 @@ print_summary() {
   echo -e "  ${GREEN}✓${NC} API"
   echo -e "  ${GREEN}✓${NC} Frontend"
   echo -e "  ${GREEN}✓${NC} Authentication"
-  echo -e "  ${GREEN}✓${NC} Admin Created"
+  echo ""
+  echo -e "${YELLOW}No default admin is created.${NC}"
+  echo -e "Open ${CYAN}http://${PUBLIC_HOST}:${WEB_PORT}/register${NC} and sign up with your email."
+  echo -e "${YELLOW}The first user to register becomes the platform administrator automatically.${NC}"
   echo ""
   echo -e "System is ready for production."
 }
@@ -660,8 +633,6 @@ perform_install() {
   clone_or_update_repo
 
   # Set defaults before any step that references them
-  : "${ADMIN_EMAIL:=admin}"
-  : "${ADMIN_PASSWORD:=admin123}"
   : "${JWT_ACCESS_SECRET:=$(openssl rand -hex 48)}"
   : "${JWT_REFRESH_SECRET:=$(openssl rand -hex 48)}"
   : "${API_PORT:=$(find_available_port 3000)}"
@@ -670,7 +641,6 @@ perform_install() {
 
   install_dependencies
   setup_prisma
-  seed_admin_account
   build_project
   write_pm2_config
   start_services
