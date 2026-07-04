@@ -13,6 +13,18 @@ export class VmRepository {
 
   // --- VM ---
 
+  async countAll(tx?: PrismaTx) {
+    return this.db(tx).vm.count();
+  }
+
+  async countByStatus(status: string, tx?: PrismaTx) {
+    return this.db(tx).vm.count({ where: { status } });
+  }
+
+  async countNewSince(since: Date, tx?: PrismaTx) {
+    return this.db(tx).vm.count({ where: { createdAt: { gte: since } } });
+  }
+
   async createVm(data: {
     userId: string;
     name: string;

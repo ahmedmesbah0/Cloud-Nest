@@ -396,6 +396,14 @@ export class AuthService {
     };
   }
 
+  async countTotalUsers() {
+    return this.authRepository.countUsers();
+  }
+
+  async countNewUsersSince(since: Date) {
+    return this.authRepository.countNewUsersSince(since);
+  }
+
   private parseExpiry(expiry: string): number {
     const match = expiry.match(/^(\d+)([smhd])$/);
     if (!match) return 7 * 24 * 60 * 60;

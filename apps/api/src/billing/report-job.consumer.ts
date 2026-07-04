@@ -1,15 +1,19 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { AuthService } from '../auth/auth.service';
+import { VmService } from '../vms/vm.service';
+import { BillingService } from './billing.service';
 
 @Processor('report-jobs', { concurrency: 1 })
 export class ReportJobConsumer extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(ReportJobConsumer.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly authService: AuthService,
+    private readonly vmService: VmService,
+    private readonly billingService: BillingService,
     private readonly mailService: MailService,
     @InjectQueue('report-jobs') private readonly queue: Queue,
   ) {
@@ -40,19 +44,17 @@ export class ReportJobConsumer extends WorkerHost implements OnApplicationBootst
   private async generateWeeklyReport() {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const [newUsers, newVms, newInvoices, totalRevenue] = await Promise.all([
-      this.prisma.user.count({ where: { createdAt: { gte: weekAgo } } }),
-      this.prisma.vm.count({ where: { createdAt: { gte: weekAgo } } }),
-      this.prisma.invoice.count({ where: { createdAt: { gte: weekAgo } } }),
-      this.prisma.invoice.aggregate({
-        where: { createdAt: { gte: weekAgo }, status: 'paid' },
-        _sum: { amount: true },
-      }),
+    const [newUsers, newVms, newInvoices, revenueAgg, totalVms, activeVms, totalUsers] = await Promise.all([
+      this.authService.countNewUsersSince(weekAgo),
+      this.vmService.countNewSince(weekAgo),
+      this.billingService.countNewInvoicesSince(weekAgo),
+      this.billingService.getRevenueSince(weekAgo),
+      this.vmService.countTotal(),
+      this.vmService.countRunning(),
+      this.authService.countTotalUsers(),
     ]);
 
-    const totalVms = await this.prisma.vm.count();
-    const activeVms = await this.prisma.vm.count({ where: { status: 'running' } });
-    const totalUsers = await this.prisma.user.count();
+    const totalRevenue = revenueAgg._sum?.amount ?? 0;
 
     const text = [
       '=== CloudNest Weekly Report ===',
@@ -69,7 +71,7 @@ export class ReportJobConsumer extends WorkerHost implements OnApplicationBootst
       `Total VMs: ${totalVms}`,
       `Running VMs: ${activeVms}`,
       '',
-      `Revenue (week): $${((totalRevenue._sum.amount ?? 0) / 100).toFixed(2)}`,
+      `Revenue (week): $${(totalRevenue / 100).toFixed(2)}`,
       '',
       '--- System ---',
       `VM utilization: ${totalVms > 0 ? Math.round((activeVms / totalVms) * 100) : 0}%`,
@@ -82,6 +84,6 @@ export class ReportJobConsumer extends WorkerHost implements OnApplicationBootst
     });
 
     this.logger.log('Weekly report generated and sent');
-    return { newUsers, newVms, newInvoices, revenue: totalRevenue._sum.amount };
+    return { newUsers, newVms, newInvoices, revenue: totalRevenue };
   }
 }

@@ -45,6 +45,10 @@ export class AuthRepository {
     return this.db(tx).user.count();
   }
 
+  async countNewUsersSince(since: Date, tx?: PrismaTx) {
+    return this.db(tx).user.count({ where: { createdAt: { gte: since } } });
+  }
+
   async createUser(data: { email: string; passwordHash: string; name?: string | null; emailVerified: boolean }, tx?: PrismaTx) {
     return this.db(tx).user.create({ data });
   }

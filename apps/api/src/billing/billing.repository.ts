@@ -50,6 +50,17 @@ export class BillingRepository {
     return this.db(tx).invoice.findUnique({ where: { id }, include });
   }
 
+  async countInvoices(where?: any, tx?: PrismaTx) {
+    return this.db(tx).invoice.count({ where });
+  }
+
+  async aggregateRevenue(where?: any, tx?: PrismaTx) {
+    return this.db(tx).invoice.aggregate({
+      where,
+      _sum: { amount: true },
+    }) as Promise<{ _sum: { amount: number | null } }>;
+  }
+
   async findInvoices(userId: string, skip: number, take: number, tx?: PrismaTx) {
     const [invoices, total] = await Promise.all([
       this.db(tx).invoice.findMany({

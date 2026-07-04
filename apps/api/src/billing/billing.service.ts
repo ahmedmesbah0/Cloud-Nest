@@ -301,6 +301,17 @@ export class BillingService {
     };
   }
 
+  async countNewInvoicesSince(since: Date) {
+    return this.billingRepo.countInvoices({ createdAt: { gte: since } });
+  }
+
+  async getRevenueSince(since: Date) {
+    return this.billingRepo.aggregateRevenue({
+      createdAt: { gte: since },
+      status: 'paid',
+    });
+  }
+
   async getAdminInvoicePdf(invoiceId: string) {
     const invoice = await this.billingRepo.findInvoiceById(invoiceId, {
       lineItems: true,

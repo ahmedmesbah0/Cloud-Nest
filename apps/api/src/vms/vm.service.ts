@@ -715,6 +715,18 @@ export class VmService {
     await this.vmRepo.createAuditLog(data);
   }
 
+  async countTotal() {
+    return this.vmRepo.countAll();
+  }
+
+  async countRunning() {
+    return this.vmRepo.countByStatus('running');
+  }
+
+  async countNewSince(since: Date) {
+    return this.vmRepo.countNewSince(since);
+  }
+
   async updateVmStatus(vmId: string, status: string, additionalData?: Record<string, unknown>) {
     return this.vmRepo.updateVm(vmId, { status, ...additionalData });
   }
