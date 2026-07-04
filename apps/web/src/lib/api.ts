@@ -46,8 +46,9 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch {
         setAccessToken(null);
+        localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
           window.location.href = '/login';
         }
         return Promise.reject(error);

@@ -26,7 +26,7 @@ export function useVmSocket(
     const token = getAccessToken();
     if (!token) return;
 
-    const socketUrl = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3000';
+    const socketUrl = process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:3003';
 
     const socket = io(`${socketUrl}/vm-status`, {
       auth: { token },
