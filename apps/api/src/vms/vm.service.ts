@@ -286,6 +286,50 @@ export class VmService {
     return { message: 'ISO eject queued' };
   }
 
+  // --- ISO Management ---
+
+  async getIsoStorages(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.nodeId) throw new BadRequestException('VM has no node');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    const storages = await this.proxmox.getStoragePools(node.proxmoxNodeId);
+    return (storages as any[]).filter((s: any) =>
+      s.content?.includes('iso'),
+    );
+  }
+
+  async getIsoList(userId: string, vmId: string, storage: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.nodeId) throw new BadRequestException('VM has no node');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    const content = await this.proxmox.getStorageContent(storage, node.proxmoxNodeId);
+    return (content as any[]).filter((c: any) =>
+      c.content === 'iso',
+    );
+  }
+
+  async getCurrentIso(userId: string, vmId: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
+    return this.proxmox.getCurrentIso(vm.proxmoxId);
+  }
+
+  async downloadUrlIso(userId: string, vmId: string, url: string, storage: string) {
+    const vm = await this.getVm(vmId, userId);
+    if (!vm.nodeId) throw new BadRequestException('VM has no node');
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+    if (!url) throw new BadRequestException('URL is required');
+    if (!storage) throw new BadRequestException('Storage is required');
+    const result = await this.proxmox.downloadUrl(url, storage, node.proxmoxNodeId);
+    await this.prisma.auditLog.create({
+      data: { userId, action: 'vm.iso.download-url', resource: 'vm', resourceId: vmId, metadata: { url, storage } as any },
+    });
+    return { message: 'ISO download initiated', task: result };
+  }
+
   async listBackups(userId: string, vmId: string) {
     const vm = await this.getVm(vmId, userId);
     return this.prisma.backup.findMany({

@@ -110,6 +110,40 @@ export class VmController {
     return this.vmService.ejectIso(userId, id);
   }
 
+  // --- ISO Management ---
+
+  @Get(':id/iso/storages')
+  @ApiOperation({ summary: 'List storage pools available for ISO content' })
+  async getIsoStorages(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.getIsoStorages(userId, id);
+  }
+
+  @Get(':id/iso/list')
+  @ApiOperation({ summary: 'List ISO files in a storage' })
+  async getIsoList(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Query('storage') storage: string,
+  ) {
+    return this.vmService.getIsoList(userId, id, storage);
+  }
+
+  @Get(':id/iso/current')
+  @ApiOperation({ summary: 'Get currently mounted ISO' })
+  async getCurrentIso(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.vmService.getCurrentIso(userId, id);
+  }
+
+  @Post(':id/iso/download-url')
+  @ApiOperation({ summary: 'Download ISO from a URL into storage' })
+  async downloadUrlIso(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { url: string; storage: string },
+  ) {
+    return this.vmService.downloadUrlIso(userId, id, body.url, body.storage);
+  }
+
   @Post(':id/migrate')
   @ApiOperation({ summary: 'Migrate VM to another node' })
   async migrate(

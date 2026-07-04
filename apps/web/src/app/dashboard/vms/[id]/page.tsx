@@ -62,6 +62,15 @@ export default function VmDetailPage() {
   const [resizeForm, setResizeForm] = useState({ cpuCores: 0, memoryMb: 0, diskGb: 0 });
   const [reinstallTemplateId, setReinstallTemplateId] = useState('');
   const [isoForm, setIsoForm] = useState({ iso: '', storage: 'local-lvm' });
+  const [isoStorages, setIsoStorages] = useState<any[]>([]);
+  const [isoList, setIsoList] = useState<any[]>([]);
+  const [currentIso, setCurrentIso] = useState<{ iso: string; storage: string } | null>(null);
+  const [selectedIsoStorage, setSelectedIsoStorage] = useState('local');
+  const [loadingIsoList, setLoadingIsoList] = useState(false);
+  const [isoDownloadUrl, setIsoDownloadUrl] = useState('');
+  const [isoDownloadStorage, setIsoDownloadStorage] = useState('local');
+  const [savingIsoDownload, setSavingIsoDownload] = useState(false);
+  const [mountingIso, setMountingIso] = useState(false);
   const [hardwareForm, setHardwareForm] = useState<Record<string, any>>({});
   const [savingHardware, setSavingHardware] = useState(false);
   const [loadingHardware, setLoadingHardware] = useState(false);
@@ -442,7 +451,20 @@ export default function VmDetailPage() {
               <RotateCcw className="h-4 w-4" /> Reinstall
             </button>
             <button
-              onClick={() => setShowIso(true)}
+              onClick={async () => {
+                setShowIso(true);
+                try {
+                  const [storagesRes, currentRes] = await Promise.all([
+                    api.get(`/vms/${vm.id}/iso/storages`),
+                    api.get(`/vms/${vm.id}/iso/current`),
+                  ]);
+                  setIsoStorages(storagesRes.data);
+                  setCurrentIso(currentRes.data);
+                  if (storagesRes.data.length > 0) {
+                    setSelectedIsoStorage(storagesRes.data[0].storage);
+                  }
+                } catch { /* backend may not support /iso/storages yet */ }
+              }}
               disabled={isProvisioning || vm.status !== 'stopped'}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
             >
@@ -722,25 +744,125 @@ export default function VmDetailPage() {
         </div>
       )}
 
-      {/* Mount ISO Modal */}
+      {/* ISO Management Modal */}
       {showIso && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Mount ISO</h3>
-            <form onSubmit={handleMountIso} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">ISO Filename</label>
-                <input type="text" value={isoForm.iso} onChange={(e) => setIsoForm({ ...isoForm, iso: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="ubuntu-24.04.iso" />
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">ISO Management</h3>
+
+            {/* Current ISO */}
+            {currentIso && (
+              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">Currently Mounted</p>
+                <p className="text-sm text-slate-900 dark:text-white font-mono mt-1">{currentIso.storage}:iso/{currentIso.iso}</p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Storage (optional)</label>
-                <input type="text" value={isoForm.storage} onChange={(e) => setIsoForm({ ...isoForm, storage: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="local-lvm" />
+            )}
+
+            {/* Browse ISOs */}
+            <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Browse ISOs</h4>
+            <div className="flex gap-2 mb-3">
+              <select
+                value={selectedIsoStorage}
+                onChange={(e) => { setSelectedIsoStorage(e.target.value); setIsoList([]); }}
+                className="flex-1 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {isoStorages.map((s: any) => (
+                  <option key={s.storage} value={s.storage}>{s.storage}</option>
+                ))}
+              </select>
+              <button
+                onClick={async () => {
+                  setLoadingIsoList(true);
+                  try {
+                    const res = await api.get(`/vms/${vm.id}/iso/list?storage=${selectedIsoStorage}`);
+                    setIsoList(res.data);
+                  } catch (err: any) { toast.error(err.response?.data?.message || 'Failed to list ISOs'); }
+                  setLoadingIsoList(false);
+                }}
+                className="px-3 py-2 text-sm rounded-lg bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300"
+              >{loadingIsoList ? '...' : 'Refresh'}</button>
+            </div>
+
+            {isoList.length > 0 ? (
+              <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
+                {isoList.map((iso: any) => (
+                  <div key={iso.volid} className="flex items-center gap-2 p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                    <span className="flex-1 text-sm font-mono text-slate-900 dark:text-white truncate">{iso.volid}</span>
+                    <button
+                      onClick={async () => {
+                        setMountingIso(true);
+                        try {
+                          const storage = iso.volid.split(':')[0];
+                          const filename = iso.volid.split('/').pop() || iso.volid;
+                          await api.post(`/vms/${vm.id}/mount-iso`, { iso: filename, storage });
+                          toast.success('ISO mount queued');
+                          setShowIso(false);
+                        } catch (err: any) { toast.error(err.response?.data?.message || 'Mount failed'); }
+                        setMountingIso(false);
+                      }}
+                      disabled={mountingIso}
+                      className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 shrink-0"
+                    >Mount</button>
+                  </div>
+                ))}
               </div>
-              <div className="flex gap-2 justify-end">
-                <button type="button" onClick={() => setShowIso(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Cancel</button>
-                <button type="submit" disabled={actionVm} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Mount ISO</button>
-              </div>
-            </form>
+            ) : (
+              <p className="text-sm text-slate-500 mb-4">Click Refresh to list ISOs in {selectedIsoStorage}</p>
+            )}
+
+            {/* Custom mount form */}
+            <details className="mb-4">
+              <summary className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer">Custom mount (type ISO name)</summary>
+              <form onSubmit={handleMountIso} className="mt-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">ISO Filename</label>
+                  <input type="text" value={isoForm.iso} onChange={(e) => setIsoForm({ ...isoForm, iso: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="ubuntu-24.04.iso" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Storage</label>
+                  <input type="text" value={isoForm.storage} onChange={(e) => setIsoForm({ ...isoForm, storage: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="local" />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button type="submit" disabled={actionVm} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">Mount</button>
+                </div>
+              </form>
+            </details>
+
+            {/* Download from URL */}
+            <details>
+              <summary className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer">Download ISO from URL</summary>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!isoDownloadUrl) { toast.error('URL is required'); return; }
+                setSavingIsoDownload(true);
+                try {
+                  await api.post(`/vms/${vm.id}/iso/download-url`, { url: isoDownloadUrl, storage: isoDownloadStorage });
+                  toast.success('ISO download initiated');
+                  setIsoDownloadUrl('');
+                } catch (err: any) { toast.error(err.response?.data?.message || 'Download failed'); }
+                setSavingIsoDownload(false);
+              }} className="mt-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">URL</label>
+                  <input type="url" value={isoDownloadUrl} onChange={(e) => setIsoDownloadUrl(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Storage</label>
+                  <select value={isoDownloadStorage} onChange={(e) => setIsoDownloadStorage(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {isoStorages.map((s: any) => (
+                      <option key={s.storage} value={s.storage}>{s.storage}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button type="submit" disabled={savingIsoDownload} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">{savingIsoDownload ? 'Downloading...' : 'Download'}</button>
+                </div>
+              </form>
+            </details>
+
+            <div className="flex justify-end mt-4">
+              <button type="button" onClick={() => setShowIso(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Close</button>
+            </div>
           </div>
         </div>
       )}

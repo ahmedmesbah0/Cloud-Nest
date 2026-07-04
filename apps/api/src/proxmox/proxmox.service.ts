@@ -411,6 +411,27 @@ export class ProxmoxService implements OnModuleInit {
     return this.post<string>(`/nodes/${node}/qemu/${vmid}/migrate`, body);
   }
 
+  async downloadUrl(
+    sourceUrl: string,
+    storage: string,
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    return this.post<string>(`/nodes/${node}/storage/${storage}/download-url`, {
+      url: sourceUrl,
+    });
+  }
+
+  async getCurrentIso(
+    vmid: number,
+    node: string = this.defaultNode,
+  ): Promise<{ iso: string; storage: string } | null> {
+    const config = await this.getVmConfig(node, vmid);
+    if (!config.ide2) return null;
+    const match = String(config.ide2).match(/^(.*?):iso\/(.*?),media=cdrom/);
+    if (!match) return null;
+    return { storage: match[1], iso: match[2] };
+  }
+
   async mountIso(
     vmid: number,
     iso: string,
