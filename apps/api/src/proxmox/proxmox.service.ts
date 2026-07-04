@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import https from 'node:https';
-import { PrismaService } from '../prisma/prisma.service';
+import { ProxmoxRepository } from './proxmox.repository';
 
 export interface ProxmoxNode {
   node: string;
@@ -62,7 +62,7 @@ export class ProxmoxService implements OnModuleInit {
 
   constructor(
     configService: ConfigService,
-    private readonly prisma?: PrismaService,
+    private readonly proxmoxRepository?: ProxmoxRepository,
   ) {
     this.host = configService.get<string>('PROXMOX_HOST', '');
     this.tokenId = configService.get<string>('PROXMOX_API_TOKEN_ID', '');
@@ -89,11 +89,11 @@ export class ProxmoxService implements OnModuleInit {
   }
 
   async refreshConfig() {
-    if (this.prisma) {
+    if (this.proxmoxRepository) {
       try {
-        const settings = await this.prisma.setting.findMany({
-          where: { key: { in: ['proxmox_host', 'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_storage'] } },
-        });
+        const settings = await this.proxmoxRepository.findSettingsByKeys(
+          ['proxmox_host', 'proxmox_token_id', 'proxmox_token_secret', 'proxmox_node', 'proxmox_storage'],
+        );
         const map: Record<string, string> = {};
         for (const s of settings) map[s.key] = s.value;
 

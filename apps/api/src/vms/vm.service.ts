@@ -712,15 +712,7 @@ export class VmService {
   async logAuditAction(data: {
     userId: string; action: string; resource: string; resourceId?: string; metadata?: any;
   }) {
-    await this.prisma.auditLog.create({
-      data: {
-        userId: data.userId,
-        action: data.action,
-        resource: data.resource,
-        resourceId: data.resourceId,
-        metadata: data.metadata,
-      },
-    });
+    await this.vmRepo.createAuditLog(data);
   }
 
   async updateVmStatus(vmId: string, status: string, additionalData?: Record<string, unknown>) {

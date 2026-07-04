@@ -169,6 +169,12 @@ export class VmRepository {
     return this.db(tx).snapshot.delete({ where: { id } });
   }
 
+  // --- Audit Log ---
+
+  async createAuditLog(data: { userId: string; action: string; resource: string; resourceId?: string; metadata?: any }, tx?: PrismaTx) {
+    return this.db(tx).auditLog.create({ data });
+  }
+
   // --- Raw Queries for resize TOCTOU check ---
 
   async lockUserPools(userId: string, tx?: PrismaTx) {

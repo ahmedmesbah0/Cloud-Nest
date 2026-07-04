@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ProxmoxService } from './proxmox.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { ProxmoxRepository } from './proxmox.repository';
 
 jest.mock('axios', () => {
   const mockAxiosInstance = {
@@ -25,10 +25,8 @@ describe('ProxmoxService', () => {
   let service: ProxmoxService;
   let mockClient: any;
 
-  const mockPrismaService = {
-    setting: {
-      findMany: jest.fn().mockResolvedValue([]),
-    },
+  const mockProxmoxRepository = {
+    findSettingsByKeys: jest.fn().mockResolvedValue([]),
   };
 
   const mockConfigService = {
@@ -52,7 +50,7 @@ describe('ProxmoxService', () => {
       providers: [
         ProxmoxService,
         { provide: ConfigService, useValue: mockConfigService },
-        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: ProxmoxRepository, useValue: mockProxmoxRepository },
       ],
     }).compile();
 
@@ -241,7 +239,7 @@ describe('ProxmoxService', () => {
               get: jest.fn(() => ''),
             },
           },
-          { provide: PrismaService, useValue: mockPrismaService },
+        { provide: ProxmoxRepository, useValue: mockProxmoxRepository },
         ],
       }).compile().then((m) => m.get(ProxmoxService));
 

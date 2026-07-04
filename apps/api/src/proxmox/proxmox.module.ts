@@ -1,11 +1,10 @@
 import { Module, Global } from '@nestjs/common';
 import { ProxmoxService } from './proxmox.service';
-import { PrismaModule } from '../prisma/prisma.module';
+import { ProxmoxRepository } from './proxmox.repository';
 
 @Global()
 @Module({
-  imports: [PrismaModule],
-  providers: [ProxmoxService],
+  providers: [ProxmoxService, ProxmoxRepository],
   exports: [ProxmoxService],
 })
 export class ProxmoxModule {}
