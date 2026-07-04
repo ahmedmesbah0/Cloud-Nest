@@ -11,8 +11,9 @@ describe('VmService', () => {
   let mockPrisma: any;
   let mockJobService: any;
   let mockPoolService: any;
+  let mockProxmoxService: any;
 
-  const store = {
+  const store: Record<string, any> = {
     vms: new Map<string, any>(),
     allocations: new Map<string, any>(),
     auditLogs: new Map<string, any>(),
@@ -20,6 +21,8 @@ describe('VmService', () => {
     templates: new Map<string, any>(),
     nodes: new Map<string, any>(),
     otherUsage: { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 },
+    backups: new Map(),
+    snapshots: new Map(),
   };
 
   const addPool = (data: any) => {
@@ -47,6 +50,9 @@ describe('VmService', () => {
     store.pools.clear();
     store.templates.clear();
     store.nodes.clear();
+    store.backups = new Map();
+    store.snapshots = new Map();
+    store.otherUsage = { cores: 0, memoryMb: 0, diskGb: 0, ips: 0 };
 
     mockJobService = {
       enqueueJob: jest.fn().mockResolvedValue({ idempotencyKey: 'ik-1', status: 'queued' }),
@@ -57,9 +63,19 @@ describe('VmService', () => {
       allocateResources: jest.fn().mockResolvedValue({ success: true, message: 'allocated' }),
     };
 
-    const mockProxmoxService = {
+    mockProxmoxService = {
       getVncTicket: jest.fn().mockResolvedValue({ ticket: 'vnctoken123', port: '5900', cert: 'testcert' }),
       getNextVmid: jest.fn().mockResolvedValue(100),
+      downloadUrl: jest.fn().mockResolvedValue({ task: 'UPID:test-task' }),
+      addFirewallRule: jest.fn().mockResolvedValue({}),
+      deleteFirewallRule: jest.fn().mockResolvedValue({}),
+      updateVmConfig: jest.fn().mockResolvedValue({}),
+      getStoragePools: jest.fn().mockResolvedValue([]),
+      getStorageContent: jest.fn().mockResolvedValue([]),
+      getFirewallRules: jest.fn().mockResolvedValue([]),
+      getVmConfig: jest.fn().mockResolvedValue({}),
+      getCurrentIso: jest.fn().mockResolvedValue(null),
+      getVmRrdData: jest.fn().mockResolvedValue({}),
     };
 
     const mockTx = {
@@ -106,7 +122,7 @@ describe('VmService', () => {
               return [{ cores: alloc.cores, memoryMb: alloc.memoryMb, diskGb: alloc.diskGb }];
             }
           }
-          return [{ cores: 0, memoryMb: 0, diskGb: 0 }];
+          return [];
         }
         return [];
       }),
@@ -121,6 +137,14 @@ describe('VmService', () => {
           return log;
         }),
       },
+      backup: {
+        update: jest.fn(({ where, data }: any) => {
+          for (const b of store.backups?.values() ?? []) {
+            if ((b as any).id === where.id) { Object.assign(b, data); return b; }
+          }
+          return null;
+        }),
+      },
     };
 
     mockPrisma = {
@@ -133,6 +157,12 @@ describe('VmService', () => {
           if (where?.userId) vms = vms.filter((v: any) => v.userId === where.userId);
           if (orderBy?.createdAt === 'desc') vms.reverse();
           return vms;
+        }),
+        update: jest.fn(({ where, data }: any) => {
+          const vm = store.vms.get(where.id);
+          if (!vm) throw new Error('Not found');
+          Object.assign(vm, data);
+          return vm;
         }),
       },
       resourcePool: {
@@ -151,12 +181,57 @@ describe('VmService', () => {
           const first = store.nodes.values().next().value;
           return first ?? null;
         }),
+        findUnique: jest.fn(({ where }: any) => {
+          return store.nodes.get(where.id) ?? null;
+        }),
       },
       auditLog: {
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
           store.auditLogs.set(log.id, log);
           return log;
+        }),
+      },
+      backup: {
+        findMany: jest.fn(() => []),
+        findUnique: jest.fn(({ where }: any) => {
+          for (const b of store.backups?.values() ?? []) {
+            if ((b as any).id === where.id) return b;
+          }
+          return null;
+        }),
+        create: jest.fn(({ data }: any) => {
+          const b = { id: `bkp-${Date.now()}`, ...data, createdAt: new Date(), updatedAt: new Date() };
+          if (!store.backups) store.backups = new Map();
+          store.backups.set(b.id, b);
+          return b;
+        }),
+        update: jest.fn(({ where, data }: any) => {
+          for (const b of store.backups?.values() ?? []) {
+            if ((b as any).id === where.id) { Object.assign(b, data); return b; }
+          }
+          return null;
+        }),
+      },
+      snapshot: {
+        findMany: jest.fn(() => []),
+        findUnique: jest.fn(({ where }: any) => {
+          for (const s of store.snapshots?.values() ?? []) {
+            if ((s as any).id === where.id) return s;
+          }
+          return null;
+        }),
+        create: jest.fn(({ data }: any) => {
+          const s = { id: `snap-${Date.now()}`, ...data, createdAt: new Date(), updatedAt: new Date() };
+          if (!store.snapshots) store.snapshots = new Map();
+          store.snapshots.set(s.id, s);
+          return s;
+        }),
+        update: jest.fn(({ where, data }: any) => {
+          for (const s of store.snapshots?.values() ?? []) {
+            if ((s as any).id === where.id) { Object.assign(s, data); return s; }
+          }
+          return null;
         }),
       },
       $transaction: jest.fn((fn: any) => fn(mockTx)),
@@ -346,8 +421,242 @@ describe('VmService', () => {
     });
   });
 
+  describe('downloadUrlIso', () => {
+    it('enqueues download-url job via BullMQ with idempotency, defers audit log to consumer', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.downloadUrlIso('user-1', 'vm-1', 'http://example.com/test.iso', 'local');
+
+      expect(result.message).toBe('ISO download queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'download-url',
+        expect.objectContaining({ vmId: 'vm-1', url: 'http://example.com/test.iso', storage: 'local', dlNode: 'r730xd' }),
+        expect.objectContaining({ userId: 'user-1', auditLog: expect.objectContaining({ action: 'vm.iso.download-url' }) }),
+      );
+      // Audit log is deferred to consumer, not written here
+      expect(store.auditLogs.size).toBe(0);
+      expect(mockProxmoxService.downloadUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('addFirewallRule / deleteFirewallRule', () => {
+    it('enqueues add-firewall-rule job via BullMQ', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const rule = { action: 'ACCEPT', source: '1.2.3.4' };
+      const result = await service.addFirewallRule('user-1', 'vm-1', rule);
+
+      expect(result.message).toBe('Firewall rule queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'add-firewall-rule',
+        expect.objectContaining({ vmId: 'vm-1', vmid: 100, fwNode: 'r730xd', rule }),
+        expect.objectContaining({ userId: 'user-1' }),
+      );
+      expect(mockProxmoxService.addFirewallRule).not.toHaveBeenCalled();
+      expect(store.auditLogs.size).toBe(0);
+    });
+
+    it('enqueues delete-firewall-rule job via BullMQ', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.deleteFirewallRule('user-1', 'vm-1', 3);
+
+      expect(result.message).toBe('Firewall rule delete queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'delete-firewall-rule',
+        expect.objectContaining({ vmId: 'vm-1', vmid: 100, pos: 3 }),
+        expect.objectContaining({ userId: 'user-1' }),
+      );
+      expect(mockProxmoxService.deleteFirewallRule).not.toHaveBeenCalled();
+    });
+
+    it('throws when VM has no proxmoxId for firewall rule', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: null, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      await expect(service.addFirewallRule('user-1', 'vm-1', {})).rejects.toThrow(BadRequestException);
+      expect(mockJobService.enqueueJob).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateHardwareConfig', () => {
+    it('enqueues update-vm-config job via BullMQ', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.updateHardwareConfig('user-1', 'vm-1', { cpu: 'host', sockets: 2 });
+
+      expect(result.message).toContain('queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'update-vm-config',
+        expect.objectContaining({ vmId: 'vm-1', vmid: 100, config: { cpu: 'host', sockets: 2 }, node: 'r730xd' }),
+        expect.objectContaining({ userId: 'user-1' }),
+      );
+      expect(mockProxmoxService.updateVmConfig).not.toHaveBeenCalled();
+      expect(store.auditLogs.size).toBe(0);
+    });
+
+    it('rejects when VM is not stopped', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      await expect(service.updateHardwareConfig('user-1', 'vm-1', { cpu: 'host' })).rejects.toThrow(BadRequestException);
+      expect(mockJobService.enqueueJob).not.toHaveBeenCalled();
+    });
+
+    it('rejects when no valid hardware keys are provided', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      await expect(service.updateHardwareConfig('user-1', 'vm-1', { unknown: 'xyz' })).rejects.toThrow(BadRequestException);
+      expect(mockJobService.enqueueJob).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setNetworkInterface / deleteNetworkInterface', () => {
+    it('setNetworkInterface enqueues update-vm-config job', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.setNetworkInterface('user-1', 'vm-1', 'net0', 'virtio=00:11:22:33:44:55,bridge=vmbr0');
+
+      expect(result.message).toContain('queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'update-vm-config',
+        expect.objectContaining({ vmId: 'vm-1', vmid: 100, config: { net0: 'virtio=00:11:22:33:44:55,bridge=vmbr0' }, node: 'r730xd' }),
+        expect.anything(),
+      );
+      expect(mockProxmoxService.updateVmConfig).not.toHaveBeenCalled();
+      expect(store.auditLogs.size).toBe(0);
+    });
+
+    it('deleteNetworkInterface enqueues update-vm-config with delete directive', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.deleteNetworkInterface('user-1', 'vm-1', 'net1');
+
+      expect(result.message).toContain('queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'update-vm-config',
+        expect.objectContaining({ vmId: 'vm-1', vmid: 100, config: { net1: 'delete' }, node: 'r730xd' }),
+        expect.anything(),
+      );
+      expect(mockProxmoxService.updateVmConfig).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid network key format', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      await expect(service.setNetworkInterface('user-1', 'vm-1', 'invalid', 'value')).rejects.toThrow(BadRequestException);
+    });
+
+    it('requires VM to be stopped', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      await expect(service.setNetworkInterface('user-1', 'vm-1', 'net0', 'virtio=...')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('reinstallVm', () => {
+    it('sets status to provisioning inside transaction with audit log, then enqueues job', async () => {
+      const template = addTemplate({});
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.reinstallVm('user-1', 'vm-1', template.id);
+
+      expect(result.message).toBe('Reinstall queued');
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+      const vm = store.vms.get('vm-1');
+      expect(vm.status).toBe('provisioning');
+      expect(store.auditLogs.size).toBe(1);
+      expect((Array.from(store.auditLogs.values()) as any[])[0].action).toBe('vm.reinstall.status');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'reinstall-vm',
+        expect.objectContaining({ vmId: 'vm-1', proxmoxId: 100 }),
+        expect.objectContaining({ userId: 'user-1' }),
+      );
+    });
+
+    it('throws when template does not exist', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'stopped', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      await expect(service.reinstallVm('user-1', 'vm-1', 'nonexistent')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('resizeVm — TOCTOU characterization', () => {
+    it('does NOT update ResourceAllocation during the pool check transaction', async () => {
+      const pool = addPool({ userId: 'user-1' });
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 2, memoryMb: 4096, diskGb: 50, createdAt: new Date(), updatedAt: new Date() });
+      store.allocations.set('alloc-1', { id: 'alloc-1', poolId: pool.id, vmId: 'vm-1', cores: 2, memoryMb: 4096, diskGb: 50, ips: 0 });
+
+      await service.resizeVm('user-1', 'vm-1', { cpuCores: 4, memoryMb: 8192 });
+
+      // CHARACTERIZES: allocation was NOT updated (still has old values)
+      const alloc = store.allocations.get('alloc-1');
+      expect(alloc.cores).toBe(2);
+      expect(alloc.memoryMb).toBe(4096);
+      expect(alloc.diskGb).toBe(50);
+      // CHARACTERIZES: VM was NOT updated (still has old values)
+      const vm = store.vms.get('vm-1');
+      expect(vm.cpuCores).toBe(2);
+      expect(vm.memoryMb).toBe(4096);
+      // CHARACTERIZES: no audit log written (deferred to consumer)
+      expect(store.auditLogs.size).toBe(0);
+      // CHARACTERIZES: enqueued resize-vm job with new values
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'resize-vm',
+        expect.objectContaining({ cores: 4, memory: 8192, disk: 50 }),
+        expect.objectContaining({ userId: 'user-1' }),
+      );
+    });
+
+    it('rejects when requesting more resources than available in pool', async () => {
+      store.otherUsage = { cores: 8, memoryMb: 16000, diskGb: 190, ips: 5 };
+      const pool = addPool({ userId: 'user-1', totalCores: 8, totalMemoryMb: 16384, totalDiskGb: 200 });
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+      store.allocations.set('alloc-1', { id: 'alloc-1', poolId: pool.id, vmId: 'vm-1', cores: 1, memoryMb: 1024, diskGb: 10, ips: 0 });
+
+      await expect(service.resizeVm('user-1', 'vm-1', { cpuCores: 4 })).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects when resize would exceed pool disk limits', async () => {
+      store.otherUsage = { cores: 2, memoryMb: 4000, diskGb: 195, ips: 5 };
+      const pool = addPool({ userId: 'user-1', totalCores: 8, totalMemoryMb: 16384, totalDiskGb: 200 });
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+      store.allocations.set('alloc-1', { id: 'alloc-1', poolId: pool.id, vmId: 'vm-1', cores: 1, memoryMb: 1024, diskGb: 10, ips: 0 });
+
+      await expect(service.resizeVm('user-1', 'vm-1', { diskGb: 20 })).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows resize with only disk change when pool has capacity', async () => {
+      const pool = addPool({ userId: 'user-1', totalCores: 8, totalMemoryMb: 16384, totalDiskGb: 200 });
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+      store.allocations.set('alloc-1', { id: 'alloc-1', poolId: pool.id, vmId: 'vm-1', cores: 1, memoryMb: 1024, diskGb: 10, ips: 0 });
+
+      const result = await service.resizeVm('user-1', 'vm-1', { diskGb: 30 });
+
+      expect(result.message).toBe('Resize queued');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'resize-vm',
+        expect.objectContaining({ disk: 30 }),
+        expect.anything(),
+      );
+    });
+
+    it('throws when VM has no resource allocation', async () => {
+      addPool({ userId: 'user-1' });
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+      // No allocation set
+
+      await expect(service.resizeVm('user-1', 'vm-1', { cpuCores: 2 })).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('getVncUrl', () => {
-    it('returns VNC connection info', async () => {
+    it('returns VNC connection info and writes audit log inside transaction', async () => {
       store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
 
       const result = await service.getVncUrl('user-1', 'vm-1');
@@ -355,6 +664,94 @@ describe('VmService', () => {
       expect(result.port).toBe('5900');
       expect(result.ticket).toBeTruthy();
       expect(store.auditLogs.size).toBe(1);
+      const log = Array.from(store.auditLogs.values())[0] as any;
+      expect(log.action).toBe('vm.console');
+      // FIXED: audit log written inside $transaction
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+    });
+  });
+
+  // --- Characterization: Bucket 1 — non-compliant audit logs ---
+
+  describe('setDnsConfig — audit log characterization', () => {
+    it('updates DNS and writes audit log inside transaction', async () => {
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', nameserver1: null, nameserver2: null, searchdomain: null, status: 'running', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.setDnsConfig('user-1', 'vm-1', { nameserver1: '8.8.8.8' });
+
+      expect(result.nameserver1).toBe('8.8.8.8');
+      expect(store.auditLogs.size).toBe(1);
+      expect((Array.from(store.auditLogs.values()) as any[])[0].action).toBe('vm.dns.update');
+      // FIXED: audit log written inside $transaction
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+    });
+  });
+
+  describe('createBackup — audit log characterization', () => {
+    it('creates backup record, enqueues backup-vm job, and does NOT write audit log directly (deferred to consumer)', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.createBackup('user-1', 'vm-1', {});
+
+      expect(result.status).toBe('pending');
+      expect(result.vmId).toBe('vm-1');
+      // CHARACTERIZES: primary audit log is deferred to consumer via enqueueJob
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'backup-vm',
+        expect.objectContaining({ vmId: 'vm-1', backupId: result.id }),
+        expect.objectContaining({ userId: 'user-1', auditLog: expect.objectContaining({ action: 'vm.backup.create' }) }),
+      );
+      // CHARACTERIZES: no direct audit log write for the create action
+      expect(store.auditLogs.size).toBe(0);
+    });
+
+    it('retention-evict: writes audit log inside transaction when 5+ completed backups exist', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+
+      // Override backup.findMany to simulate 5 completed backups for retention eviction
+      const completedBackups = Array.from({ length: 5 }, (_, i) => ({
+        id: `old-bkp-${i}`,
+        vmId: 'vm-1',
+        status: 'completed',
+        createdAt: new Date(Date.now() - (5 - i) * 86400000),
+      }));
+      const origFindMany = mockPrisma.backup.findMany;
+      mockPrisma.backup.findMany = jest.fn().mockResolvedValue(completedBackups);
+
+      try {
+        const result = await service.createBackup('user-1', 'vm-1', {});
+
+        expect(result.status).toBe('pending');
+        expect(store.auditLogs.size).toBe(1);
+        const log = Array.from(store.auditLogs.values())[0] as any;
+        expect(log.action).toBe('vm.backup.retention-evict');
+        expect(log.metadata.reason).toBe('FIFO eviction');
+        // FIXED: audit log written inside $transaction
+        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      } finally {
+        mockPrisma.backup.findMany = origFindMany;
+      }
+    });
+  });
+
+  describe('deleteBackup — audit log characterization', () => {
+    it('marks backup failed and writes audit log inside transaction', async () => {
+      addNode();
+      store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
+      if (!store.backups) store.backups = new Map();
+      store.backups.set('bkp-1', { id: 'bkp-1', vmId: 'vm-1', status: 'completed', storage: 'local-lvm', name: 'test-backup', createdAt: new Date(), updatedAt: new Date() });
+
+      const result = await service.deleteBackup('user-1', 'vm-1', 'bkp-1');
+
+      expect(result.message).toBe('Backup deleted');
+      const bkp = store.backups.get('bkp-1');
+      expect(bkp.status).toBe('failed');
+      expect(store.auditLogs.size).toBe(1);
+      expect((Array.from(store.auditLogs.values()) as any[])[0].action).toBe('vm.backup.delete');
+      // FIXED: audit log written inside $transaction
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
     });
   });
 });

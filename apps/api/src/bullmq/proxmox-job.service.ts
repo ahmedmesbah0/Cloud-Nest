@@ -23,7 +23,11 @@ export type ProxmoxJobType =
   | 'mount-iso'
   | 'eject-iso'
   | 'migrate-vm'
-  | 'rollback-snapshot';
+  | 'rollback-snapshot'
+  | 'update-vm-config'
+  | 'add-firewall-rule'
+  | 'delete-firewall-rule'
+  | 'download-url';
 
 export interface ProxmoxJobData {
   type: ProxmoxJobType;

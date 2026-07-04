@@ -238,9 +238,14 @@ export class VmService {
     const template = await this.prisma.vmTemplate.findUnique({ where: { id: templateId } });
     if (!template) throw new BadRequestException('Template not found');
 
-    await this.prisma.vm.update({
-      where: { id: vmId },
-      data: { status: 'provisioning' },
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.vm.update({
+        where: { id: vmId },
+        data: { status: 'provisioning' },
+      });
+      await tx.auditLog.create({
+        data: { userId, action: 'vm.reinstall.status', resource: 'vm', resourceId: vmId },
+      });
     });
 
     const result = await this.jobService.enqueueJob('reinstall-vm', {
@@ -328,11 +333,18 @@ export class VmService {
     if (!node) throw new NotFoundException('Node not found');
     if (!url) throw new BadRequestException('URL is required');
     if (!storage) throw new BadRequestException('Storage is required');
-    const result = await this.proxmox.downloadUrl(url, storage, node.proxmoxNodeId);
-    await this.prisma.auditLog.create({
-      data: { userId, action: 'vm.iso.download-url', resource: 'vm', resourceId: vmId, metadata: { url, storage } as any },
+
+    const result = await this.jobService.enqueueJob('download-url', {
+      vmId,
+      url,
+      storage,
+      dlNode: node.proxmoxNodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.iso.download-url', resource: 'vm', resourceId: vmId },
     });
-    return { message: 'ISO download initiated', task: result };
+
+    return { message: 'ISO download queued', task: result };
   }
 
   async listBackups(userId: string, vmId: string) {
@@ -369,12 +381,14 @@ export class VmService {
     const MAX_BACKUPS = 5;
     if (existing.length >= MAX_BACKUPS) {
       const toDelete = existing[0];
-      await this.prisma.backup.update({
-        where: { id: toDelete.id },
-        data: { status: 'failed' },
-      });
-      await this.prisma.auditLog.create({
-        data: { userId, action: 'vm.backup.retention-evict', resource: 'backup', resourceId: toDelete.id, metadata: { vmId, reason: 'FIFO eviction' } },
+      await this.prisma.$transaction(async (tx: any) => {
+        await tx.backup.update({
+          where: { id: toDelete.id },
+          data: { status: 'failed' },
+        });
+        await tx.auditLog.create({
+          data: { userId, action: 'vm.backup.retention-evict', resource: 'backup', resourceId: toDelete.id, metadata: { vmId, reason: 'FIFO eviction' } },
+        });
       });
     }
 
@@ -399,19 +413,20 @@ export class VmService {
     const backup = await this.prisma.backup.findUnique({ where: { id: backupId } });
     if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
 
-    await this.prisma.backup.update({
-      where: { id: backupId },
-      data: { status: 'failed' },
-    });
-
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'vm.backup.delete',
-        resource: 'backup',
-        resourceId: backupId,
-        metadata: { vmId },
-      },
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.backup.update({
+        where: { id: backupId },
+        data: { status: 'failed' },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'vm.backup.delete',
+          resource: 'backup',
+          resourceId: backupId,
+          metadata: { vmId },
+        },
+      });
     });
 
     return { message: 'Backup deleted' };
@@ -555,27 +570,39 @@ export class VmService {
   async addFirewallRule(userId: string, vmId: string, rule: Record<string, unknown>) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
-    await this.prisma.auditLog.create({
-      data: {
-        userId, action: 'vm.firewall.add',
-        resource: 'vm', resourceId: vmId,
-        metadata: { rule } as any,
-      },
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+
+    await this.jobService.enqueueJob('add-firewall-rule', {
+      vmId,
+      vmid: vm.proxmoxId,
+      fwNode: node.proxmoxNodeId,
+      rule,
+    }, {
+      userId,
+      auditLog: { action: 'vm.firewall.add', resource: 'vm', resourceId: vmId },
     });
-    return this.proxmox.addFirewallRule(vm.nodeId, vm.proxmoxId, rule);
+
+    return { message: 'Firewall rule queued' };
   }
 
   async deleteFirewallRule(userId: string, vmId: string, pos: number) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
-    await this.prisma.auditLog.create({
-      data: {
-        userId, action: 'vm.firewall.delete',
-        resource: 'vm', resourceId: vmId,
-        metadata: { pos } as any,
-      },
+    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    if (!node) throw new NotFoundException('Node not found');
+
+    await this.jobService.enqueueJob('delete-firewall-rule', {
+      vmId,
+      vmid: vm.proxmoxId,
+      fwNode: node.proxmoxNodeId,
+      pos,
+    }, {
+      userId,
+      auditLog: { action: 'vm.firewall.delete', resource: 'vm', resourceId: vmId },
     });
-    return this.proxmox.deleteFirewallRule(vm.nodeId, vm.proxmoxId, pos);
+
+    return { message: 'Firewall rule delete queued' };
   }
 
   async migrateVm(userId: string, vmId: string, targetNodeId: string, online?: boolean) {
@@ -631,19 +658,17 @@ export class VmService {
       throw new BadRequestException('No valid hardware settings provided');
     }
 
-    await this.proxmox.updateVmConfig(vm.proxmoxId, config, node.proxmoxNodeId);
-
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'vm.hardware.update',
-        resource: 'vm',
-        resourceId: vmId,
-        metadata: { config } as any,
-      },
+    await this.jobService.enqueueJob('update-vm-config', {
+      vmId,
+      vmid: vm.proxmoxId,
+      config,
+      node: node.proxmoxNodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.hardware.update', resource: 'vm', resourceId: vmId },
     });
 
-    return { message: 'Hardware configuration updated. Reboot the VM for changes to take effect.' };
+    return { message: 'Hardware configuration update queued. Reboot the VM for changes to take effect.' };
   }
 
   // --- Network Interfaces ---
@@ -670,11 +695,16 @@ export class VmService {
     if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change network config');
     const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
     if (!node) throw new NotFoundException('Node not found');
-    await this.proxmox.updateVmConfig(vm.proxmoxId, { [key]: value }, node.proxmoxNodeId);
-    await this.prisma.auditLog.create({
-      data: { userId, action: 'vm.network.set', resource: 'vm', resourceId: vmId, metadata: { key, value } as any },
+    await this.jobService.enqueueJob('update-vm-config', {
+      vmId,
+      vmid: vm.proxmoxId,
+      config: { [key]: value },
+      node: node.proxmoxNodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.network.set', resource: 'vm', resourceId: vmId },
     });
-    return { message: `Network interface ${key} updated.` };
+    return { message: `Network interface ${key} update queued.` };
   }
 
   async deleteNetworkInterface(userId: string, vmId: string, key: string) {
@@ -684,11 +714,16 @@ export class VmService {
     if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change network config');
     const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
     if (!node) throw new NotFoundException('Node not found');
-    await this.proxmox.updateVmConfig(vm.proxmoxId, { [key]: 'delete' }, node.proxmoxNodeId);
-    await this.prisma.auditLog.create({
-      data: { userId, action: 'vm.network.delete', resource: 'vm', resourceId: vmId, metadata: { key } as any },
+    await this.jobService.enqueueJob('update-vm-config', {
+      vmId,
+      vmid: vm.proxmoxId,
+      config: { [key]: 'delete' },
+      node: node.proxmoxNodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.network.delete', resource: 'vm', resourceId: vmId },
     });
-    return { message: `Network interface ${key} deleted.` };
+    return { message: `Network interface ${key} delete queued.` };
   }
 
   // --- DNS ---
@@ -704,16 +739,19 @@ export class VmService {
 
   async setDnsConfig(userId: string, vmId: string, dto: { nameserver1?: string; nameserver2?: string; searchdomain?: string }) {
     const vm = await this.getVm(vmId, userId);
-    const updated = await this.prisma.vm.update({
-      where: { id: vmId },
-      data: {
-        nameserver1: dto.nameserver1 ?? vm.nameserver1,
-        nameserver2: dto.nameserver2 ?? vm.nameserver2,
-        searchdomain: dto.searchdomain ?? vm.searchdomain,
-      },
-    });
-    await this.prisma.auditLog.create({
-      data: { userId, action: 'vm.dns.update', resource: 'vm', resourceId: vmId, metadata: dto as any },
+    const updated = await this.prisma.$transaction(async (tx: any) => {
+      const u = await tx.vm.update({
+        where: { id: vmId },
+        data: {
+          nameserver1: dto.nameserver1 ?? vm.nameserver1,
+          nameserver2: dto.nameserver2 ?? vm.nameserver2,
+          searchdomain: dto.searchdomain ?? vm.searchdomain,
+        },
+      });
+      await tx.auditLog.create({
+        data: { userId, action: 'vm.dns.update', resource: 'vm', resourceId: vmId, metadata: dto as any },
+      });
+      return u;
     });
     return {
       nameserver1: updated.nameserver1,
@@ -729,14 +767,16 @@ export class VmService {
 
     const vncInfo = await this.proxmox.getVncTicket(vm.proxmoxId);
 
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'vm.console',
-        resource: 'vm',
-        resourceId: vmId,
-        metadata: { timestamp: new Date().toISOString() },
-      },
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'vm.console',
+          resource: 'vm',
+          resourceId: vmId,
+          metadata: { timestamp: new Date().toISOString() },
+        },
+      });
     });
 
     return { ...vncInfo, host: process.env.PROXMOX_HOST || '172.16.1.10' };

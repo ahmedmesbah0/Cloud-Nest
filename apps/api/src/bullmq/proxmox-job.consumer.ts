@@ -19,8 +19,10 @@ const JOB_STATUS_MAP: Partial<Record<ProxmoxJobType, VmStatus>> = {
   'resume-vm': 'running',
   'delete-vm': 'deleted',
   'reinstall-vm': 'stopped',
+  'resize-vm': 'running',
   'rollback-snapshot': 'stopped',
   'restore-backup': 'stopped',
+  'update-vm-config': 'stopped',
 };
 
 @Processor('proxmox-jobs', {
@@ -72,7 +74,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
           await this.poolService.releaseResources(vmId);
         }
 
-        // Update VM + allocation after successful resize
+        // Update VM + allocation after successful resize (with pool re-check)
         if (type === 'resize-vm') {
           const newCores = payload.cores as number;
           const newMem = payload.memory as number;
@@ -80,10 +82,45 @@ export class ProxmoxJobConsumer extends WorkerHost {
           updateData.cpuCores = newCores;
           updateData.memoryMb = newMem;
           updateData.diskGb = newDisk;
-          await this.prisma.resourceAllocation.update({
-            where: { vmId },
-            data: { cores: newCores, memoryMb: newMem, diskGb: newDisk },
-          }).catch(() => {});
+
+          const vmRecord = await this.prisma.vm.findUnique({ where: { id: vmId } });
+          if (vmRecord) {
+            await this.prisma.$transaction(async (tx: any) => {
+              const poolRows: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number }> = await tx.$queryRawUnsafe(
+                `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
+                vmRecord.userId,
+              );
+              const pool = poolRows[0];
+              if (pool) {
+                const usage: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
+                  `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb" FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
+                  pool.id, vmId,
+                );
+                const used = usage[0];
+                const availCores = pool.totalCores - Number(used.cores);
+                const availMem = pool.totalMemoryMb - Number(used.memoryMb);
+                const availDisk = pool.totalDiskGb - Number(used.diskGb);
+
+                const currentAlloc: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
+                  `SELECT cores, "memoryMb", "diskGb" FROM "ResourceAllocation" WHERE "vmId" = $1`,
+                  vmId,
+                );
+                const old = currentAlloc[0];
+                if (old) {
+                  const cpuDelta = newCores - Number(old.cores);
+                  const memDelta = newMem - Number(old.memoryMb);
+                  const diskDelta = newDisk - Number(old.diskGb);
+                  if (cpuDelta > availCores || memDelta > availMem || diskDelta > availDisk) {
+                    throw new Error('Insufficient pool capacity for resize');
+                  }
+                }
+              }
+              await tx.resourceAllocation.update({
+                where: { vmId },
+                data: { cores: newCores, memoryMb: newMem, diskGb: newDisk },
+              });
+            });
+          }
         }
 
         if (type === 'create-vm') {
@@ -366,6 +403,41 @@ export class ProxmoxJobConsumer extends WorkerHost {
           node,
         );
         return result;
+      }
+
+      case 'update-vm-config':
+        await this.proxmox.assertVmManaged(payload.vmid as number, node);
+        return this.proxmox.updateVmConfig(
+          payload.vmid as number,
+          payload.config as Record<string, unknown>,
+          node,
+        );
+
+      case 'add-firewall-rule': {
+        const fwNode = payload.fwNode as string ?? node;
+        return this.proxmox.addFirewallRule(
+          fwNode,
+          payload.vmid as number,
+          payload.rule as Record<string, unknown>,
+        );
+      }
+
+      case 'delete-firewall-rule': {
+        const fwNode = payload.fwNode as string ?? node;
+        return this.proxmox.deleteFirewallRule(
+          fwNode,
+          payload.vmid as number,
+          payload.pos as number,
+        );
+      }
+
+      case 'download-url': {
+        const dlNode = payload.dlNode as string ?? node;
+        return this.proxmox.downloadUrl(
+          payload.url as string,
+          payload.storage as string,
+          dlNode,
+        );
       }
 
       default:
