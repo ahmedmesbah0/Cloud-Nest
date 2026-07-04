@@ -90,6 +90,15 @@ export class AdminController {
     return this.adminService.listAllVms(query.page ?? 1, query.limit ?? 50);
   }
 
+  @Post('vms')
+  @ApiOperation({ summary: 'Create a VM for a user (admin)' })
+  async adminCreateVm(@CurrentUser('id') adminUserId: string, @Body() dto: {
+    userId: string; name: string; poolId?: string; templateId: string;
+    cpuCores: number; memoryMb: number; diskGb: number; sshKeyId?: string;
+  }) {
+    return this.adminService.adminCreateVm(adminUserId, dto);
+  }
+
   @Get('vms/:id')
   @ApiOperation({ summary: 'Get VM details (admin)' })
   async getVm(@Param('id') id: string) {

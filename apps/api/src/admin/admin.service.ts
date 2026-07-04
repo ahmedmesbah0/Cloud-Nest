@@ -112,6 +112,104 @@ export class AdminService {
     return user;
   }
 
+  async adminCreateVm(adminUserId: string, dto: {
+    userId: string;
+    name: string;
+    poolId?: string;
+    templateId: string;
+    cpuCores: number;
+    memoryMb: number;
+    diskGb: number;
+    sshKeyId?: string;
+  }) {
+    const targetUser = await this.prisma.user.findUnique({ where: { id: dto.userId } });
+    if (!targetUser) throw new BadRequestException('Target user not found');
+
+    let poolId = dto.poolId;
+    if (!poolId) {
+      const pool = await this.prisma.resourcePool.findFirst({ where: { userId: dto.userId } });
+      if (!pool) throw new BadRequestException('Target user has no resource pool');
+      poolId = pool.id;
+    }
+
+    const pool = await this.prisma.resourcePool.findUnique({ where: { id: poolId } });
+    if (!pool) throw new BadRequestException('Resource pool not found');
+
+    const template = await this.prisma.vmTemplate.findUnique({ where: { id: dto.templateId } });
+    if (!template) throw new BadRequestException('Template not found');
+
+    const defaultNode = await this.prisma.node.findFirst({
+      where: { isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!defaultNode) throw new BadRequestException('No active node available');
+
+    const vmid = await this.proxmoxService.getNextVmid();
+
+    const vm = await this.prisma.$transaction(async (tx: any) => {
+      const vm = await tx.vm.create({
+        data: {
+          userId: dto.userId,
+          name: dto.name,
+          status: 'provisioning',
+          proxmoxId: vmid,
+          nodeId: defaultNode.id,
+          cpuCores: dto.cpuCores,
+          memoryMb: dto.memoryMb,
+          diskGb: dto.diskGb,
+          templateId: dto.templateId,
+        },
+      });
+
+      await this.poolService.allocateResources({
+        poolId,
+        vmId: vm.id,
+        cores: dto.cpuCores,
+        memoryMb: dto.memoryMb,
+        diskGb: dto.diskGb,
+      }, tx);
+
+      const availableIp = await tx.ipAddress.findFirst({
+        where: { isAssigned: false, vmId: null },
+        orderBy: { address: 'asc' },
+      });
+      if (availableIp) {
+        await tx.ipAddress.update({
+          where: { id: availableIp.id },
+          data: { isAssigned: true, vmId: vm.id },
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          userId: adminUserId,
+          action: 'admin.vm.create',
+          resource: 'vm',
+          resourceId: vm.id,
+          metadata: { targetUserId: dto.userId, name: dto.name, templateId: dto.templateId, cpuCores: dto.cpuCores, memoryMb: dto.memoryMb, diskGb: dto.diskGb, vmid, node: defaultNode.id },
+        },
+      });
+
+      return vm;
+    });
+
+    await this.jobService.enqueueJob('create-vm', {
+      vmId: vm.id,
+      vmid,
+      name: dto.name,
+      cores: dto.cpuCores,
+      memory: dto.memoryMb,
+      disk: dto.diskGb,
+      templateVmid: Number(template.proxmoxTemplateId),
+      node: defaultNode.proxmoxNodeId,
+    }, {
+      userId: adminUserId,
+      auditLog: { action: 'admin.vm.provision', resource: 'vm', resourceId: vm.id },
+    });
+
+    return vm;
+  }
+
   async getAdminVm(vmId: string) {
     const vm = await this.prisma.vm.findUnique({
       where: { id: vmId },
