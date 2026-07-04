@@ -5,7 +5,14 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { loadAppEnv } from './load-env';
 
-loadAppEnv(path.resolve(process.cwd(), '.env'));
+// Load .env from the repo root (three levels up from apps/api/src/seed/),
+// then fall back to cwd. This makes `npm run seed:admin -w apps/api` work
+// because npm sets cwd to apps/api, not the repo root.
+const repoRoot = path.resolve(__dirname, '..', '..', '..');
+loadAppEnv(path.resolve(repoRoot, '.env'));
+if (!process.env.DATABASE_URL) {
+  loadAppEnv(path.resolve(process.cwd(), '.env'));
+}
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) as any });
