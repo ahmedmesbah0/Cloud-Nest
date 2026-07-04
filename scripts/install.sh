@@ -566,8 +566,8 @@ module.exports = {
     },
     {
       name: 'cloudnest-web',
-      cwd: '${INSTALL_DIR}',
-      script: 'node_modules/next/dist/bin/next',
+      cwd: '${INSTALL_DIR}/apps/web',
+      script: '../../node_modules/next/dist/bin/next',
       args: 'start -p ${WEB_PORT} -H 0.0.0.0',
       env: {
         NODE_ENV: 'production',
@@ -587,7 +587,11 @@ start_services() {
   log_section "Starting services"
   cd "$INSTALL_DIR"
   pm2 delete cloudnest-api cloudnest-web >/dev/null 2>&1 || true
-  pm2 start "$INSTALL_DIR/ecosystem.config.cjs" >/dev/null 2>&1
+  if ! pm2 start "$INSTALL_DIR/ecosystem.config.cjs" >/dev/null 2>&1; then
+    err "PM2 failed to start services"
+    pm2 logs cloudnest-api cloudnest-web --lines 20 --nostream 2>&1 | tail -40
+    return 1
+  fi
   pm2 save >/dev/null 2>&1 || true
   pm2 startup >/dev/null 2>&1 || true
   ok "Services started with PM2"
@@ -615,10 +619,14 @@ run_health_checks() {
 
   if ! wait_for_http "$api_url" 20 3; then
     err "API did not become reachable"
+    info "PM2 API logs (last 30 lines):"
+    pm2 logs cloudnest-api --lines 30 --nostream 2>&1 | tail -30
     return 1
   fi
   if ! wait_for_http "$web_url" 20 3; then
     err "Frontend did not become reachable"
+    info "PM2 web logs (last 30 lines):"
+    pm2 logs cloudnest-web --lines 30 --nostream 2>&1 | tail -30
     return 1
   fi
 
