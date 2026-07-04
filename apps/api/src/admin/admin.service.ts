@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { AdminRepository } from './admin.repository';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
@@ -9,6 +10,7 @@ import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly adminRepo: AdminRepository,
     private readonly proxmoxService: ProxmoxService,
     private readonly poolService: ResourcePoolService,
     private readonly jobService: ProxmoxJobService,
@@ -17,60 +19,44 @@ export class AdminService {
 
   async getDashboardStats() {
     const [totalUsers, totalVms, totalNodes, activeVms, totalWallets] = await Promise.all([
-      this.prisma.user.count(),
-      this.prisma.vm.count(),
-      this.prisma.node.count(),
-      this.prisma.vm.count({ where: { status: 'running' } }),
-      this.prisma.wallet.count(),
+      this.adminRepo.countUsers(),
+      this.adminRepo.countVms(),
+      this.adminRepo.countNodes(),
+      this.adminRepo.countVmsByStatus('running'),
+      this.adminRepo.countWallets(),
     ]);
 
-    const totalBalance = await this.prisma.wallet.aggregate({ _sum: { balance: true } });
+    const totalBalance = await this.adminRepo.aggregateWalletBalance();
 
     return {
       totalUsers, totalVms, totalNodes, activeVms, totalWallets,
       totalBalance: totalBalance._sum.balance ?? 0,
-      recentVms: await this.prisma.vm.findMany({
-        orderBy: { createdAt: 'desc' }, take: 10,
-        include: { user: { select: { email: true, name: true } } },
-      }),
-      recentUsers: await this.prisma.user.findMany({
-        orderBy: { createdAt: 'desc' }, take: 10,
-      }),
+      recentVms: await this.adminRepo.findRecentVms(),
+      recentUsers: await this.adminRepo.findUsersRecent(),
     };
   }
 
   async listUsers(page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
-        skip, take: limit, orderBy: { createdAt: 'desc' },
-        include: { roles: { include: { role: true } }, _count: { select: { vms: true } } },
-      }),
-      this.prisma.user.count(),
+      this.adminRepo.findUsers(skip, limit),
+      this.adminRepo.countUsers(),
     ]);
     return { users, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async getUser(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        roles: { include: { role: true } },
-        wallet: { include: { transactions: { orderBy: { createdAt: 'desc' }, take: 20 } } },
-        vms: { orderBy: { createdAt: 'desc' } },
-        _count: { select: { vms: true, sessions: true, apiKeys: true, sshKeys: true } },
-      },
-    });
+    const user = await this.adminRepo.findUserById(userId);
     if (!user) throw new NotFoundException('User not found');
     return user;
   }
 
   async updateUser(adminUserId: string, userId: string, data: { name?: string; emailVerified?: boolean; isActive?: boolean }) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.adminRepo.findUserBasic(userId);
     if (!user) throw new NotFoundException('User not found');
 
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.user.update({ where: { id: userId }, data });
+      const r = await this.adminRepo.updateUser(userId, data as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.user.update',
@@ -86,9 +72,7 @@ export class AdminService {
 
   async deactivateUser(adminUserId: string, userId: string) {
     const user = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.user.update({
-        where: { id: userId }, data: { isActive: false },
-      });
+      const r = await this.adminRepo.updateUser(userId, { isActive: false } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.user.deactivate',
@@ -103,9 +87,7 @@ export class AdminService {
 
   async activateUser(adminUserId: string, userId: string) {
     const user = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.user.update({
-        where: { id: userId }, data: { isActive: true },
-      });
+      const r = await this.adminRepo.updateUser(userId, { isActive: true } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.user.activate',
@@ -128,26 +110,23 @@ export class AdminService {
     diskGb: number;
     sshKeyId?: string;
   }) {
-    const targetUser = await this.prisma.user.findUnique({ where: { id: dto.userId } });
+    const targetUser = await this.adminRepo.findUserBasic(dto.userId);
     if (!targetUser) throw new BadRequestException('Target user not found');
 
     let poolId = dto.poolId;
     if (!poolId) {
-      const pool = await this.prisma.resourcePool.findFirst({ where: { userId: dto.userId } });
+      const pool = await this.adminRepo.findPoolByUser(dto.userId);
       if (!pool) throw new BadRequestException('Target user has no resource pool');
       poolId = pool.id;
     }
 
-    const pool = await this.prisma.resourcePool.findUnique({ where: { id: poolId } });
+    const pool = await this.adminRepo.findPoolById(poolId!);
     if (!pool) throw new BadRequestException('Resource pool not found');
 
-    const template = await this.prisma.vmTemplate.findUnique({ where: { id: dto.templateId } });
+    const template = await this.adminRepo.findTemplateById(dto.templateId);
     if (!template) throw new BadRequestException('Template not found');
 
-    const defaultNode = await this.prisma.node.findFirst({
-      where: { isActive: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    const defaultNode = await this.adminRepo.findFirstActiveNode();
     if (!defaultNode) throw new BadRequestException('No active node available');
 
     const vmid = await this.proxmoxService.getNextVmid();
@@ -168,7 +147,7 @@ export class AdminService {
       });
 
       await this.poolService.allocateResources({
-        poolId,
+        poolId: poolId!,
         vmId: vm.id,
         cores: dto.cpuCores,
         memoryMb: dto.memoryMb,
@@ -217,22 +196,13 @@ export class AdminService {
   }
 
   async getAdminVm(vmId: string) {
-    const vm = await this.prisma.vm.findUnique({
-      where: { id: vmId },
-      include: {
-        user: { select: { id: true, email: true, name: true } },
-        node: { select: { id: true, name: true, proxmoxNodeId: true } },
-        snapshots: { orderBy: { createdAt: 'desc' } },
-        backups: { orderBy: { createdAt: 'desc' }, take: 20 },
-        _count: { select: { snapshots: true, backups: true } },
-      },
-    });
+    const vm = await this.adminRepo.findVmWithDetails(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     return vm;
   }
 
   async adminPowerAction(adminUserId: string, vmId: string, action: 'start' | 'stop' | 'restart' | 'shutdown') {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
 
     if (vm.status !== 'running' && vm.status !== 'stopped') {
@@ -264,21 +234,18 @@ export class AdminService {
   async listAllVms(page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const [vms, total] = await Promise.all([
-      this.prisma.vm.findMany({
-        skip, take: limit, orderBy: { createdAt: 'desc' },
-        include: { user: { select: { email: true, name: true } } },
-      }),
-      this.prisma.vm.count(),
+      this.adminRepo.findVms(skip, limit),
+      this.adminRepo.countVms(),
     ]);
     return { vms, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async forceStopVm(adminUserId: string, vmId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vm.update({ where: { id: vmId }, data: { status: 'stopped' } });
+      await this.adminRepo.updateVm(vmId, { status: 'stopped' } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.vm.force-stop',
@@ -292,13 +259,13 @@ export class AdminService {
   }
 
   async forceDeleteVm(adminUserId: string, vmId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
 
     await this.poolService.releaseResources(vmId);
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vm.delete({ where: { id: vmId } });
+      await this.adminRepo.deleteVm(vmId, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.vm.force-delete',
@@ -312,24 +279,21 @@ export class AdminService {
   }
 
   async listNodes() {
-    return this.prisma.node.findMany({ include: { inventory: true, storagePools: true } });
+    return this.adminRepo.findNodes();
   }
 
   async getNode(nodeId: string) {
-    const node = await this.prisma.node.findUnique({
-      where: { id: nodeId },
-      include: { inventory: true, storagePools: true, vms: { take: 50 } },
-    });
+    const node = await this.adminRepo.findNodeById(nodeId);
     if (!node) throw new NotFoundException('Node not found');
     return node;
   }
 
   async createNode(adminUserId: string, data: { proxmoxNodeId: string; name: string; host: string; port?: number }) {
-    const existing = await this.prisma.node.findUnique({ where: { proxmoxNodeId: data.proxmoxNodeId } });
+    const existing = await this.adminRepo.findNodeByProxmoxId(data.proxmoxNodeId);
     if (existing) throw new BadRequestException('Node with this Proxmox ID already exists');
 
     const node = await this.prisma.$transaction(async (tx: any) => {
-      const n = await tx.node.create({ data });
+      const n = await this.adminRepo.createNode(data as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.node.create',
@@ -344,11 +308,11 @@ export class AdminService {
   }
 
   async updateNode(adminUserId: string, nodeId: string, data: { name?: string; host?: string; port?: number; isActive?: boolean }) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    const node = await this.adminRepo.findNodeById(nodeId);
     if (!node) throw new NotFoundException('Node not found');
 
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.node.update({ where: { id: nodeId }, data });
+      const r = await this.adminRepo.updateNode(nodeId, data as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.node.update',
@@ -363,23 +327,21 @@ export class AdminService {
   }
 
   async getSettings() {
-    const settings = await this.prisma.setting.findMany();
+    const settings = await this.adminRepo.findSettings();
     const result: Record<string, string> = {};
     for (const s of settings) result[s.key] = s.value;
     return result;
   }
 
   async getSetting(key: string) {
-    const setting = await this.prisma.setting.findUnique({ where: { key } });
+    const setting = await this.adminRepo.findSettingByKey(key);
     if (!setting) throw new NotFoundException(`Setting "${key}" not found`);
     return setting;
   }
 
   async setSetting(key: string, value: string) {
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.setting.upsert({
-        where: { key }, create: { key, value }, update: { value },
-      });
+      const r = await this.adminRepo.upsertSetting(key, value, tx);
       await tx.auditLog.create({
         data: {
           action: 'admin.setting.set',
@@ -395,11 +357,11 @@ export class AdminService {
   }
 
   async deleteSetting(key: string) {
-    const setting = await this.prisma.setting.findUnique({ where: { key } });
+    const setting = await this.adminRepo.findSettingByKey(key);
     if (!setting) throw new NotFoundException(`Setting "${key}" not found`);
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.setting.delete({ where: { key } });
+      await this.adminRepo.deleteSetting(key, tx);
       await tx.auditLog.create({
         data: {
           action: 'admin.setting.delete',
@@ -414,26 +376,27 @@ export class AdminService {
   async getAuditLogs(page = 1, limit = 100) {
     const skip = (page - 1) * limit;
     const [logs, total] = await Promise.all([
-      this.prisma.auditLog.findMany({
-        skip, take: limit, orderBy: { createdAt: 'desc' },
-        include: { user: { select: { email: true, name: true } } },
-      }),
-      this.prisma.auditLog.count(),
+      this.adminRepo.findAuditLogs(skip, limit),
+      this.adminRepo.countAuditLogs(),
     ]);
     return { logs, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async creditUserWallet(adminUserId: string, userId: string, amount: number) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.adminRepo.findUserBasic(userId);
     if (!user) throw new NotFoundException('User not found');
 
     const wallet = await this.prisma.$transaction(async (tx: any) => {
-      const w = await tx.wallet.upsert({
-        where: { userId }, create: { userId, balance: amount }, update: { balance: { increment: amount } },
-      });
-      await tx.transaction.create({
-        data: { walletId: w.id, amount, type: 'credit', reference: 'admin:manual', metadata: { adminAction: true } },
-      });
+      const w = await this.adminRepo.upsertWallet(
+        userId,
+        { userId, balance: amount } as Record<string, unknown>,
+        { balance: { increment: amount } } as Record<string, unknown>,
+        tx,
+      );
+      await this.adminRepo.createTransaction(
+        { walletId: w.id, amount, type: 'credit', reference: 'admin:manual', metadata: { adminAction: true } } as Record<string, unknown>,
+        tx,
+      );
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.wallet.credit',
@@ -448,20 +411,21 @@ export class AdminService {
   }
 
   async assignRole(adminUserId: string, userId: string, roleName: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.adminRepo.findUserBasic(userId);
     if (!user) throw new NotFoundException('User not found');
 
     await this.prisma.$transaction(async (tx: any) => {
-      const role = await tx.role.upsert({
-        where: { name: roleName }, create: { name: roleName, description: `Role: ${roleName}` }, update: {},
-      });
+      const role = await this.adminRepo.upsertRole(
+        { name: roleName },
+        { name: roleName, description: `Role: ${roleName}` },
+        {},
+        tx,
+      );
 
-      const existing = await tx.userRole.findUnique({
-        where: { userId_roleId: { userId, roleId: role.id } },
-      });
+      const existing = await this.adminRepo.findUserRole(userId, role.id, tx);
 
       if (!existing) {
-        await tx.userRole.create({ data: { userId, roleId: role.id } });
+        await this.adminRepo.createUserRole({ userId, roleId: role.id } as Record<string, unknown>, tx);
       }
 
       await tx.auditLog.create({
@@ -478,10 +442,10 @@ export class AdminService {
 
   async removeRole(adminUserId: string, userId: string, roleName: string) {
     await this.prisma.$transaction(async (tx: any) => {
-      const role = await tx.role.findUnique({ where: { name: roleName } });
+      const role = await this.adminRepo.findRoleByName(roleName, tx);
       if (!role) throw new NotFoundException(`Role "${roleName}" not found`);
 
-      await tx.userRole.deleteMany({ where: { userId, roleId: role.id } });
+      await this.adminRepo.deleteUserRoles(userId, role.id, tx);
 
       await tx.auditLog.create({
         data: {
@@ -496,25 +460,21 @@ export class AdminService {
   }
 
   async listRoles() {
-    return this.prisma.role.findMany({
-      include: { permissions: { include: { permission: true } }, _count: { select: { users: true } } },
-    });
+    return this.adminRepo.findRoles();
   }
 
   async listTemplates(page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const [templates, total] = await Promise.all([
-      this.prisma.vmTemplate.findMany({
-        skip, take: limit, orderBy: { name: 'asc' },
-      }),
-      this.prisma.vmTemplate.count(),
+      this.adminRepo.findTemplates(skip, limit),
+      this.adminRepo.countTemplates(),
     ]);
     return { templates, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async createTemplate(adminUserId: string, data: { name: string; proxmoxTemplateId: string; osType: string; minDiskGb: number; minMemoryMb: number }) {
     const template = await this.prisma.$transaction(async (tx: any) => {
-      const t = await tx.vmTemplate.create({ data });
+      const t = await this.adminRepo.createTemplate(data as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.template.create',
@@ -528,10 +488,10 @@ export class AdminService {
   }
 
   async updateTemplate(adminUserId: string, id: string, data: { name?: string; isActive?: boolean; minDiskGb?: number; minMemoryMb?: number }) {
-    const template = await this.prisma.vmTemplate.findUnique({ where: { id } });
+    const template = await this.adminRepo.findTemplateById(id);
     if (!template) throw new NotFoundException('Template not found');
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.vmTemplate.update({ where: { id }, data });
+      const r = await this.adminRepo.updateTemplate(id, data as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.template.update',
@@ -545,10 +505,10 @@ export class AdminService {
   }
 
   async deleteTemplate(adminUserId: string, id: string) {
-    const template = await this.prisma.vmTemplate.findUnique({ where: { id } });
+    const template = await this.adminRepo.findTemplateById(id);
     if (!template) throw new NotFoundException('Template not found');
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vmTemplate.delete({ where: { id } });
+      await this.adminRepo.deleteTemplate(id, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.template.delete',
@@ -560,10 +520,10 @@ export class AdminService {
   }
 
   async toggleNodeMaintenance(adminUserId: string, nodeId: string, isActive: boolean) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    const node = await this.adminRepo.findNodeById(nodeId);
     if (!node) throw new NotFoundException('Node not found');
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.node.update({ where: { id: nodeId }, data: { isActive } });
+      const r = await this.adminRepo.updateNode(nodeId, { isActive } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: `admin.node.${isActive ? 'activate' : 'maintenance'}`,
@@ -576,10 +536,10 @@ export class AdminService {
   }
 
   async renameVm(adminUserId: string, vmId: string, name: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.vm.update({ where: { id: vmId }, data: { name } });
+      const r = await this.adminRepo.updateVm(vmId, { name } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.vm.rename',
@@ -593,7 +553,7 @@ export class AdminService {
   }
 
   async impersonateUser(adminUserId: string, targetUserId: string) {
-    const targetUser = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+    const targetUser = await this.adminRepo.findUserBasic(targetUserId);
     if (!targetUser) throw new NotFoundException('User not found');
 
     const accessToken = this.jwtService.sign(
@@ -613,11 +573,11 @@ export class AdminService {
   }
 
   async migrateVm(adminUserId: string, vmId: string, targetNodeId: string, online?: boolean) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID');
 
-    const targetNode = await this.prisma.node.findUnique({ where: { id: targetNodeId } });
+    const targetNode = await this.adminRepo.findNodeById(targetNodeId);
     if (!targetNode) throw new NotFoundException('Target node not found');
 
     await this.jobService.enqueueJob('migrate-vm', {
@@ -636,14 +596,14 @@ export class AdminService {
 
   async getProxmoxTemplates() {
     if (!this.proxmoxService['initialized']) {
-      return this.prisma.vmTemplate.findMany({ where: { isActive: true } });
+      return this.adminRepo.findActiveTemplates();
     }
     try {
       const proxmoxTemplates = await this.proxmoxService.getTemplates();
-      const dbTemplates = await this.prisma.vmTemplate.findMany();
+      const dbTemplates = await this.adminRepo.findAllTemplates();
       return { proxmox: proxmoxTemplates, db: dbTemplates };
     } catch {
-      return this.prisma.vmTemplate.findMany({ where: { isActive: true } });
+      return this.adminRepo.findActiveTemplates();
     }
   }
 
@@ -657,9 +617,7 @@ export class AdminService {
   }
 
   async getBillingPricing() {
-    const settings = await this.prisma.setting.findMany({
-      where: { key: { startsWith: 'pricing_' } },
-    });
+    const settings = await this.adminRepo.findSettingsByPrefix('pricing_');
     const prices: Record<string, string> = {};
     for (const s of settings) {
       prices[s.key.replace('pricing_', '')] = s.value;
@@ -677,7 +635,7 @@ export class AdminService {
   }
 
   async getVmFirewall(vmId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     if (!vm.proxmoxId || !vm.nodeId) return [];
     try {
@@ -688,10 +646,10 @@ export class AdminService {
   }
 
   async addVmFirewall(adminUserId: string, vmId: string, rule: Record<string, unknown>) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.adminRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
 
     await this.jobService.enqueueJob('add-firewall-rule', {
@@ -708,10 +666,10 @@ export class AdminService {
   }
 
   async deleteVmFirewall(adminUserId: string, vmId: string, pos: number) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.adminRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
 
     await this.jobService.enqueueJob('delete-firewall-rule', {
@@ -728,16 +686,13 @@ export class AdminService {
   }
 
   async adminReinstallVm(adminUserId: string, vmId: string, templateId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
-    const template = await this.prisma.vmTemplate.findUnique({ where: { id: templateId } });
+    const template = await this.adminRepo.findTemplateById(templateId);
     if (!template) throw new BadRequestException('Template not found');
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vm.update({
-        where: { id: vmId },
-        data: { status: 'provisioning' },
-      });
+      await this.adminRepo.updateVm(vmId, { status: 'provisioning' } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.vm.reinstall.status', resource: 'vm', resourceId: vmId },
       });
@@ -756,28 +711,26 @@ export class AdminService {
   }
 
   async adminResizeVm(adminUserId: string, vmId: string, dto: { cpuCores?: number; memoryMb?: number; diskGb?: number }) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.adminRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
 
     const newCores = dto.cpuCores ?? vm.cpuCores;
     const newMemory = dto.memoryMb ?? vm.memoryMb;
     const newDisk = dto.diskGb ?? vm.diskGb;
 
-    const allocation = await this.prisma.resourceAllocation.findUnique({ where: { vmId } });
+    const allocation = await this.adminRepo.findResourceAllocationByVm(vmId);
     if (allocation) {
       const deltaCores = newCores - vm.cpuCores;
       const deltaMemory = newMemory - vm.memoryMb;
       const deltaDisk = newDisk - vm.diskGb;
 
       if (deltaCores > 0 || deltaMemory > 0 || deltaDisk > 0) {
-        const pool = await this.prisma.resourcePool.findUnique({ where: { id: allocation.poolId } });
+        const pool = await this.adminRepo.findPoolById(allocation.poolId);
         if (pool) {
-          const allAllocations = await this.prisma.resourceAllocation.findMany({
-            where: { poolId: allocation.poolId, vmId: { not: vmId } },
-          });
-          const usedCores = allAllocations.reduce((s, a) => s + a.cores, 0);
-          const usedMemory = allAllocations.reduce((s, a) => s + a.memoryMb, 0);
-          const usedDisk = allAllocations.reduce((s, a) => s + a.diskGb, 0);
+          const allAllocations = await this.adminRepo.findResourceAllocationsByPool(allocation.poolId, vmId);
+          const usedCores = allAllocations.reduce((s: number, a: any) => s + a.cores, 0);
+          const usedMemory = allAllocations.reduce((s: number, a: any) => s + a.memoryMb, 0);
+          const usedDisk = allAllocations.reduce((s: number, a: any) => s + a.diskGb, 0);
 
           if (usedCores + deltaCores > pool.totalCores) throw new ForbiddenException('Insufficient CPU in pool');
           if (usedMemory + deltaMemory > pool.totalMemoryMb) throw new ForbiddenException('Insufficient memory in pool');
@@ -804,10 +757,10 @@ export class AdminService {
   // --- Roles CRUD ---
 
   async createRole(adminUserId: string, data: { name: string; description?: string }) {
-    const existing = await this.prisma.role.findUnique({ where: { name: data.name } });
+    const existing = await this.adminRepo.findRoleByName(data.name);
     if (existing) throw new BadRequestException('Role already exists');
     const role = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.role.create({ data: { name: data.name, description: data.description } });
+      const r = await this.adminRepo.createRole({ name: data.name, description: data.description } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.role.create', resource: 'role', resourceId: r.id, metadata: data as any },
       });
@@ -817,14 +770,14 @@ export class AdminService {
   }
 
   async updateRole(adminUserId: string, roleId: string, data: { name?: string; description?: string }) {
-    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    const role = await this.adminRepo.findRoleById(roleId);
     if (!role) throw new NotFoundException('Role not found');
     if (data.name && data.name !== role.name) {
-      const existing = await this.prisma.role.findUnique({ where: { name: data.name } });
+      const existing = await this.adminRepo.findRoleByName(data.name);
       if (existing) throw new BadRequestException('Role name already taken');
     }
     const updated = await this.prisma.$transaction(async (tx: any) => {
-      const r = await tx.role.update({ where: { id: roleId }, data });
+      const r = await this.adminRepo.updateRole(roleId, data as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.role.update', resource: 'role', resourceId: roleId, metadata: data as any },
       });
@@ -834,11 +787,11 @@ export class AdminService {
   }
 
   async deleteRole(adminUserId: string, roleId: string) {
-    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    const role = await this.adminRepo.findRoleById(roleId);
     if (!role) throw new NotFoundException('Role not found');
     if (role.name === 'admin') throw new BadRequestException('Cannot delete the admin role');
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.role.delete({ where: { id: roleId } });
+      await this.adminRepo.deleteRole(roleId, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.role.delete', resource: 'role', resourceId: roleId },
       });
@@ -847,29 +800,22 @@ export class AdminService {
   }
 
   async getRole(roleId: string) {
-    const role = await this.prisma.role.findUnique({
-      where: { id: roleId },
-      include: { permissions: { include: { permission: true } }, _count: { select: { users: true } } },
-    });
+    const role = await this.adminRepo.findRoleWithPermissions(roleId);
     if (!role) throw new NotFoundException('Role not found');
     return role;
   }
 
   async listPermissions() {
-    return this.prisma.permission.findMany({ orderBy: [{ resource: 'asc' }, { action: 'asc' }] });
+    return this.adminRepo.findPermissions();
   }
 
   async addRolePermission(adminUserId: string, roleId: string, permissionId: string) {
-    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    const role = await this.adminRepo.findRoleById(roleId);
     if (!role) throw new NotFoundException('Role not found');
-    const perm = await this.prisma.permission.findUnique({ where: { id: permissionId } });
+    const perm = await this.adminRepo.findPermissionById(permissionId);
     if (!perm) throw new NotFoundException('Permission not found');
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.rolePermission.upsert({
-        where: { roleId_permissionId: { roleId, permissionId } },
-        create: { roleId, permissionId },
-        update: {},
-      });
+      await this.adminRepo.upsertRolePermission(roleId, permissionId, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.role.add-permission', resource: 'role', resourceId: roleId, metadata: { permissionId } as any },
       });
@@ -878,12 +824,10 @@ export class AdminService {
   }
 
   async removeRolePermission(adminUserId: string, roleId: string, permissionId: string) {
-    const rp = await this.prisma.rolePermission.findUnique({
-      where: { roleId_permissionId: { roleId, permissionId } },
-    });
+    const rp = await this.adminRepo.findRolePermission(roleId, permissionId);
     if (!rp) throw new NotFoundException('Permission not assigned to role');
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.rolePermission.delete({ where: { id: rp.id } });
+      await this.adminRepo.deleteRolePermission(rp.id, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.role.remove-permission', resource: 'role', resourceId: roleId, metadata: { permissionId } as any },
       });
@@ -894,42 +838,24 @@ export class AdminService {
   // --- Support Tickets (admin) ---
 
   async adminListTickets(status?: string) {
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     if (status) where.status = status;
-    return this.prisma.supportTicket.findMany({
-      where,
-      include: { user: { select: { id: true, name: true, email: true } }, _count: { select: { messages: true } } },
-      orderBy: { updatedAt: 'desc' },
-    });
+    return this.adminRepo.findTickets(where);
   }
 
   async adminGetTicket(ticketId: string) {
-    const ticket = await this.prisma.supportTicket.findUnique({
-      where: { id: ticketId },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        messages: {
-          include: { user: { select: { id: true, name: true, email: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
+    const ticket = await this.adminRepo.findTicketWithMessages(ticketId);
     if (!ticket) throw new NotFoundException('Ticket not found');
     return ticket;
   }
 
   async adminReplyTicket(adminUserId: string, ticketId: string, body: string) {
-    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.adminRepo.findTicketById(ticketId);
     if (!ticket) throw new NotFoundException('Ticket not found');
     if (ticket.status === 'closed') throw new BadRequestException('Ticket is closed');
     const msg = await this.prisma.$transaction(async (tx: any) => {
-      const m = await tx.supportTicketMessage.create({
-        data: { ticketId, userId: adminUserId, body },
-      });
-      await tx.supportTicket.update({
-        where: { id: ticketId },
-        data: { status: 'open', updatedAt: new Date() },
-      });
+      const m = await this.adminRepo.createTicketMessage({ ticketId, userId: adminUserId, body } as Record<string, unknown>, tx);
+      await this.adminRepo.updateTicket(ticketId, { status: 'open', updatedAt: new Date() } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.ticket.reply', resource: 'support-ticket', resourceId: ticketId },
       });
@@ -939,11 +865,11 @@ export class AdminService {
   }
 
   async adminCloseTicket(adminUserId: string, ticketId: string) {
-    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.adminRepo.findTicketById(ticketId);
     if (!ticket) throw new NotFoundException('Ticket not found');
     if (ticket.status === 'closed') throw new BadRequestException('Ticket is already closed');
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.supportTicket.update({ where: { id: ticketId }, data: { status: 'closed', updatedAt: new Date() } });
+      await this.adminRepo.updateTicket(ticketId, { status: 'closed', updatedAt: new Date() } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.ticket.close', resource: 'support-ticket', resourceId: ticketId },
       });
@@ -952,11 +878,11 @@ export class AdminService {
   }
 
   async adminReopenTicket(adminUserId: string, ticketId: string) {
-    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.adminRepo.findTicketById(ticketId);
     if (!ticket) throw new NotFoundException('Ticket not found');
     if (ticket.status !== 'closed') throw new BadRequestException('Ticket is not closed');
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.supportTicket.update({ where: { id: ticketId }, data: { status: 'open', updatedAt: new Date() } });
+      await this.adminRepo.updateTicket(ticketId, { status: 'open', updatedAt: new Date() } as Record<string, unknown>, tx);
       await tx.auditLog.create({
         data: { userId: adminUserId, action: 'admin.ticket.reopen', resource: 'support-ticket', resourceId: ticketId },
       });
@@ -967,12 +893,13 @@ export class AdminService {
   async broadcastNotification(adminUserId: string, title: string, body: string, targetUserId?: string) {
     await this.prisma.$transaction(async (tx: any) => {
       if (targetUserId) {
-        await tx.notification.create({ data: { userId: targetUserId, title, body } });
+        await this.adminRepo.createNotification({ userId: targetUserId, title, body } as Record<string, unknown>, tx);
       } else {
-        const users = await tx.user.findMany({ select: { id: true } });
-        await tx.notification.createMany({
-          data: users.map((u: { id: string }) => ({ userId: u.id, title, body })),
-        });
+        const users = await this.adminRepo.findManyUserIds(tx);
+        await this.adminRepo.createManyNotifications(
+          users.map((u: { id: string }) => ({ userId: u.id, title, body })) as Array<Record<string, unknown>>,
+          tx,
+        );
       }
       await tx.auditLog.create({
         data: {

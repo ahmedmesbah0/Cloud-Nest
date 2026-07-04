@@ -99,4 +99,22 @@ export class ProxmoxJobService {
     });
     return record;
   }
+
+  async findIdempotencyKey(key: string) {
+    return this.prisma.idempotencyKey.findUnique({ where: { key } });
+  }
+
+  async completeIdempotencyKey(key: string) {
+    return this.prisma.idempotencyKey.update({
+      where: { key },
+      data: { status: 'completed', completedAt: new Date() },
+    });
+  }
+
+  async failIdempotencyKey(key: string) {
+    return this.prisma.idempotencyKey.update({
+      where: { key },
+      data: { status: 'failed' },
+    });
+  }
 }

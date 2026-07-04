@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { VmService } from './vm.service';
+import { VmRepository } from './vm.repository';
 import { VmController } from './vm.controller';
 import { VmGateway } from './vm.gateway';
 import { VncProxyGateway } from './vnc-proxy.gateway';
@@ -9,7 +10,7 @@ import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 @Module({
   imports: [ResourcePoolModule],
   controllers: [VmController],
-  providers: [VmService, VmGateway, VncProxyGateway, JwtService],
+  providers: [VmService, VmRepository, VmGateway, VncProxyGateway, JwtService],
   exports: [VmService, VmGateway],
 })
 export class VmModule {}

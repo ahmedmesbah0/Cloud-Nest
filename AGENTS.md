@@ -72,3 +72,34 @@ ARCHITECTURE_AND_SECURITY_RULES.md. When touching an existing module:
    now or track it for the audit pass.
 3. New code added to an existing module must follow the rules even if the
    surrounding code doesn't yet — don't match bad patterns for consistency.
+
+## Git & commit discipline
+1. Commit after every logically complete, independently-reviewable unit of
+   work — never batch multiple unrelated changes into one commit, and
+   never leave completed work uncommitted at the end of a turn.
+2. NEVER commit if lint, typecheck, or tests are failing. Fix first, or
+   stop and report the failure — do not commit broken code "to save
+   progress."
+3. NEVER commit `.env`, credentials, API tokens, or any real secret. Check
+   `git status` and the diff before every commit for anything that looks
+   like a secret.
+4. Use Conventional Commits format for every commit message:
+   `<type>(<scope>): <short imperative summary>`
+   - `type` is one of: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`,
+     `security`, `perf`, `ci`
+   - `scope` is the module or area touched, e.g. `auth`, `billing-core`,
+     `resources`, `proxmox`, `servers`
+   - Summary is imperative mood, lowercase, no trailing period:
+     `fix(billing-core): wrap credit adjustment in transaction`
+   - For anything non-trivial, add a commit body (blank line, then
+     wrapped prose) explaining *why*, not just what — especially for any
+     remediation commit, reference which audit finding it resolves.
+5. One module per commit during remediation work, per
+   REMEDIATION_PLAYBOOK.md — never bundle fixes to two different modules
+   into a single commit even if they're related.
+6. Show the exact `git diff --stat` (or full diff for smaller changes) and
+   the commit message before running `git commit`, so the change is
+   reviewable before it lands — then commit only after implicit or
+   explicit confirmation for the current step.
+7. Never `git push` without being explicitly asked to. Local commits only
+   unless told otherwise.

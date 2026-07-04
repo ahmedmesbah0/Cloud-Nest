@@ -1,11 +1,12 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService, CLOUDNEST_MANAGED_TAG } from '../proxmox/proxmox.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
+import { VmService } from '../vms/vm.service';
 import { VmGateway } from '../vms/vm.gateway';
-import { ProxmoxJobData, ProxmoxJobType } from './proxmox-job.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { ProxmoxJobService, ProxmoxJobData, ProxmoxJobType } from './proxmox-job.service';
 
 type VmStatus = 'running' | 'stopped' | 'suspended' | 'provisioning' | 'error' | 'deleted';
 
@@ -32,10 +33,12 @@ export class ProxmoxJobConsumer extends WorkerHost {
   private readonly logger = new Logger(ProxmoxJobConsumer.name);
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly proxmox: ProxmoxService,
     private readonly poolService: ResourcePoolService,
+    private readonly vmService: VmService,
     private readonly vmGateway: VmGateway,
+    private readonly jobService: ProxmoxJobService,
+    private readonly notificationsService: NotificationsService,
   ) {
     super();
   }
@@ -45,9 +48,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
 
     this.logger.log(`Processing ${type} job (idempotencyKey=${idempotencyKey})`);
 
-    const ik = await this.prisma.idempotencyKey.findUnique({
-      where: { key: idempotencyKey },
-    });
+    const ik = await this.jobService.findIdempotencyKey(idempotencyKey);
     if (!ik) {
       throw new Error(`Idempotency key "${idempotencyKey}" not found in database`);
     }
@@ -60,10 +61,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
       const vmId = payload.vmId as string | undefined;
       const result = await this.executeJob(type, payload, userId);
 
-      await this.prisma.idempotencyKey.update({
-        where: { key: idempotencyKey },
-        data: { status: 'completed', completedAt: new Date() },
-      });
+      await this.jobService.completeIdempotencyKey(idempotencyKey);
 
       const newStatus = JOB_STATUS_MAP[type];
       if (vmId && newStatus) {
@@ -83,43 +81,9 @@ export class ProxmoxJobConsumer extends WorkerHost {
           updateData.memoryMb = newMem;
           updateData.diskGb = newDisk;
 
-          const vmRecord = await this.prisma.vm.findUnique({ where: { id: vmId } });
+          const vmRecord = await this.vmService.getVmWithIps(vmId);
           if (vmRecord) {
-            await this.prisma.$transaction(async (tx: any) => {
-              const poolRows: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number }> = await tx.$queryRawUnsafe(
-                `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
-                vmRecord.userId,
-              );
-              const pool = poolRows[0];
-              if (pool) {
-                const usage: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
-                  `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb" FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
-                  pool.id, vmId,
-                );
-                const used = usage[0];
-                const availCores = pool.totalCores - Number(used.cores);
-                const availMem = pool.totalMemoryMb - Number(used.memoryMb);
-                const availDisk = pool.totalDiskGb - Number(used.diskGb);
-
-                const currentAlloc: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
-                  `SELECT cores, "memoryMb", "diskGb" FROM "ResourceAllocation" WHERE "vmId" = $1`,
-                  vmId,
-                );
-                const old = currentAlloc[0];
-                if (old) {
-                  const cpuDelta = newCores - Number(old.cores);
-                  const memDelta = newMem - Number(old.memoryMb);
-                  const diskDelta = newDisk - Number(old.diskGb);
-                  if (cpuDelta > availCores || memDelta > availMem || diskDelta > availDisk) {
-                    throw new Error('Insufficient pool capacity for resize');
-                  }
-                }
-              }
-              await tx.resourceAllocation.update({
-                where: { vmId },
-                data: { cores: newCores, memoryMb: newMem, diskGb: newDisk },
-              });
-            });
+            await this.poolService.resizeAllocation(vmId, newCores, newMem, newDisk, vmRecord.userId);
           }
         }
 
@@ -127,10 +91,7 @@ export class ProxmoxJobConsumer extends WorkerHost {
           if (payload.vmid) updateData.proxmoxId = payload.vmid;
           if (payload.node) updateData.nodeId = payload.node as string;
         }
-        await this.prisma.vm.update({
-          where: { id: vmId },
-          data: updateData,
-        });
+        await this.vmService.updateVmStatus(vmId, newStatus, updateData);
 
         this.vmGateway.emitVmStatusUpdate(vmId, newStatus, {
           jobType: type,
@@ -143,16 +104,13 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: `VM ${newStatus}`,
             type,
           });
-          await this.persistNotification(userId, `VM ${newStatus}`, `Your VM (${payload.name ?? ''}) is now ${newStatus}.`);
+          await this.notificationsService.create(userId, `VM ${newStatus}`, `Your VM (${payload.name ?? ''}) is now ${newStatus}.`);
         }
       }
 
       // Update backup record on success
       if (type === 'backup-vm' && payload.backupId) {
-        const backupRecord = await this.prisma.backup.findUnique({
-          where: { id: payload.backupId as string },
-          include: { vm: { include: { node: true } } },
-        });
+        const backupRecord = await this.vmService.findBackupWithVm(payload.backupId as string);
         let volid: string | null = null;
         if (backupRecord?.vm?.node?.proxmoxNodeId && backupRecord.storage) {
           try {
@@ -165,9 +123,8 @@ export class ProxmoxJobConsumer extends WorkerHost {
             }
           } catch { /* non-critical */ }
         }
-        await this.prisma.backup.update({
-          where: { id: payload.backupId as string },
-          data: { status: 'completed', completedAt: new Date(), proxmoxId: String(result), volid },
+        await this.vmService.completeBackup(payload.backupId as string, {
+          status: 'completed', completedAt: new Date(), proxmoxId: String(result), volid,
         });
         if (userId) {
           this.vmGateway.emitUserNotification(userId, 'vm-notification', {
@@ -175,15 +132,14 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: 'Backup completed',
             type: 'backup-vm',
           });
-          await this.persistNotification(userId, 'Backup completed', `VM backup completed successfully.`);
+          await this.notificationsService.create(userId, 'Backup completed', `VM backup completed successfully.`);
         }
       }
 
       // Update snapshot record on success
       if (type === 'create-snapshot' && payload.snapshotId) {
-        await this.prisma.snapshot.update({
-          where: { id: payload.snapshotId as string },
-          data: { status: 'created', proxmoxId: String(result) },
+        await this.vmService.completeSnapshot(payload.snapshotId as string, {
+          status: 'created', proxmoxId: String(result),
         });
         if (userId) {
           this.vmGateway.emitUserNotification(userId, 'vm-notification', {
@@ -191,34 +147,34 @@ export class ProxmoxJobConsumer extends WorkerHost {
             message: 'Snapshot created',
             type: 'create-snapshot',
           });
-          await this.persistNotification(userId, 'Snapshot created', `VM snapshot created successfully.`);
+          await this.notificationsService.create(userId, 'Snapshot created', `VM snapshot created successfully.`);
         }
       }
 
       // Remove snapshot record after successful delete
       if (type === 'delete-snapshot' && payload.snapshotId) {
-        await this.prisma.snapshot.delete({
-          where: { id: payload.snapshotId as string },
-        }).catch(() => {});
+        try {
+          await this.vmService.removeSnapshotRecord(payload.snapshotId as string);
+        } catch {
+          this.logger.warn(`Snapshot ${payload.snapshotId} already removed from database`);
+        }
         if (userId) {
           this.vmGateway.emitUserNotification(userId, 'vm-notification', {
             vmId,
             message: 'Snapshot deleted',
             type: 'delete-snapshot',
           });
-          await this.persistNotification(userId, 'Snapshot deleted', `VM snapshot was deleted.`);
+          await this.notificationsService.create(userId, 'Snapshot deleted', `VM snapshot was deleted.`);
         }
       }
 
       if (auditLog && userId) {
-        await this.prisma.auditLog.create({
-          data: {
-            userId,
-            action: auditLog.action,
-            resource: auditLog.resource,
-            resourceId: auditLog.resourceId,
-            metadata: { idempotencyKey, payload } as any,
-          },
+        await this.vmService.logAuditAction({
+          userId,
+          action: auditLog.action,
+          resource: auditLog.resource,
+          resourceId: auditLog.resourceId,
+          metadata: { idempotencyKey, payload },
         });
       }
 
@@ -228,18 +184,16 @@ export class ProxmoxJobConsumer extends WorkerHost {
 
       const vmId = payload.vmId as string | undefined;
       if (vmId) {
-        await this.prisma.vm.update({
-          where: { id: vmId },
-          data: { status: 'error' },
-        }).catch(() => {});
+        try {
+          await this.vmService.updateVmStatus(vmId, 'error');
+        } catch {
+          this.logger.warn(`Failed to set error status on VM ${vmId} — record may not exist`);
+        }
         this.vmGateway.emitVmStatusUpdate(vmId, 'error', { error: (error as Error).message });
       }
 
       if (job.attemptsMade >= (job.opts?.attempts ?? 5) - 1) {
-        await this.prisma.idempotencyKey.update({
-          where: { key: idempotencyKey },
-          data: { status: 'failed' },
-        });
+        await this.jobService.failIdempotencyKey(idempotencyKey);
       }
 
       throw error;
@@ -445,25 +399,12 @@ export class ProxmoxJobConsumer extends WorkerHost {
     }
   }
 
-  private async persistNotification(userId: string, title: string, body: string) {
-    try {
-      await this.prisma.notification.create({
-        data: { userId, title, body },
-      });
-    } catch {
-      // non-critical, ignore
-    }
-  }
-
   private async setVmNotes(vmid: number, payload: Record<string, unknown>, userId: string | undefined, node: string | undefined) {
     try {
       const vmId = payload.vmId as string;
       if (!vmId) return;
 
-      const vmRecord = await this.prisma.vm.findUnique({
-        where: { id: vmId },
-        include: { ipAddresses: true },
-      });
+      const vmRecord = await this.vmService.getVmWithIps(vmId);
       if (!vmRecord) return;
 
       const ownerId = userId ?? vmRecord.userId;

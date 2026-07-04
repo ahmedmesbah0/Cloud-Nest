@@ -80,6 +80,15 @@ export class AuthService {
         });
       }
 
+      await tx.auditLog.create({
+        data: {
+          userId: u.id,
+          action: 'register',
+          resource: 'user',
+          resourceId: u.id,
+        },
+      });
+
       return { user: u, isFirstUser };
     });
 
@@ -117,9 +126,19 @@ export class AuthService {
       throw new BadRequestException('Invalid or expired verification token');
     }
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { emailVerified: true, emailVerifyToken: null },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true, emailVerifyToken: null },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'verify-email',
+          resource: 'user',
+          resourceId: user.id,
+        },
+      });
     });
 
     return { message: 'Email verified successfully' };
@@ -206,8 +225,26 @@ export class AuthService {
 
   async logout(refreshToken: string) {
     const hashed = this.hashToken(refreshToken);
-    await this.prisma.session.deleteMany({
+    const sessions = await this.prisma.session.findMany({
       where: { refreshToken: hashed },
+      select: { userId: true },
+    });
+    const userId = sessions.length > 0 ? sessions[0].userId : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.session.deleteMany({
+        where: { refreshToken: hashed },
+      });
+      if (userId) {
+        await tx.auditLog.create({
+          data: {
+            userId,
+            action: 'logout',
+            resource: 'session',
+            resourceId: hashed,
+          },
+        });
+      }
     });
     return { message: 'Logged out successfully' };
   }
@@ -241,9 +278,19 @@ export class AuthService {
       throw new BadRequestException('Invalid TOTP token, please try again');
     }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { totpSecret: secret, totpEnabled: true },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { totpSecret: secret, totpEnabled: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'enable-2fa',
+          resource: 'user',
+          resourceId: userId,
+        },
+      });
     });
 
     return { message: '2FA enabled successfully' };
@@ -260,9 +307,19 @@ export class AuthService {
       throw new BadRequestException('Invalid TOTP token');
     }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { totpSecret: null, totpEnabled: false },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { totpSecret: null, totpEnabled: false },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'disable-2fa',
+          resource: 'user',
+          resourceId: userId,
+        },
+      });
     });
 
     return { message: '2FA disabled successfully' };
@@ -277,12 +334,22 @@ export class AuthService {
     const resetToken = randomBytes(32).toString('hex');
     const resetTokenHash = createHash('sha256').update(resetToken).digest('hex');
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        emailVerifyToken: resetTokenHash,
-        updatedAt: new Date(),
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          emailVerifyToken: resetTokenHash,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'forgot-password',
+          resource: 'user',
+          resourceId: user.id,
+        },
+      });
     });
 
     const resetUrl = `${this.configService.get<string>('NEXT_PUBLIC_API_URL', 'http://localhost:3000')}/auth/reset-password?token=${resetToken}`;
@@ -308,17 +375,26 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(dto.password);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash,
-        emailVerifyToken: null,
-        updatedAt: new Date(),
-      },
-    });
-
-    await this.prisma.session.deleteMany({
-      where: { userId: user.id },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          emailVerifyToken: null,
+          updatedAt: new Date(),
+        },
+      });
+      await tx.session.deleteMany({
+        where: { userId: user.id },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'reset-password',
+          resource: 'user',
+          resourceId: user.id,
+        },
+      });
     });
 
     return { message: 'Password reset successfully' };

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AdminService } from './admin.service';
+import { AdminRepository } from './admin.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
@@ -9,6 +10,7 @@ import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 
 describe('AdminService', () => {
   let service: AdminService;
+  let mockRepo: any;
   let mockPrisma: any;
 
   const store = {
@@ -36,185 +38,226 @@ describe('AdminService', () => {
     store.userRoles.clear();
     store.allocations.clear();
 
+    mockRepo = {
+      // Users
+      countUsers: jest.fn(async () => store.users.size),
+      findUsersRecent: jest.fn(async () => []),
+      findUsers: jest.fn(async (skip: number, take: number) => {
+        const users = Array.from(store.users.values());
+        users.sort((a: any, b: any) => b.createdAt - a.createdAt);
+        const result = users.slice(skip || 0, (skip || 0) + (take || 50));
+        return result.map((u: any) => ({ ...u, _count: { vms: 0 } }));
+      }),
+      findUserById: jest.fn(async (id: string) => {
+        const u = store.users.get(id);
+        if (!u) return null;
+        return { ...u, wallet: store.wallets.get(id) ?? null, vms: [], _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
+      }),
+      findUserBasic: jest.fn(async (id: string) => store.users.get(id) ?? null),
+      updateUser: jest.fn(async (id: string, data: any) => {
+        const u = store.users.get(id);
+        if (!u) throw new NotFoundException();
+        Object.assign(u, data);
+        return u;
+      }),
+      findManyUserIds: jest.fn(async () => Array.from(store.users.values()).map((u: any) => ({ id: u.id }))),
+      // VMs
+      countVms: jest.fn(async () => store.vms.size),
+      countVmsByStatus: jest.fn(async (status: string) => {
+        return Array.from(store.vms.values()).filter((v: any) => v.status === status).length;
+      }),
+      findRecentVms: jest.fn(async () => []),
+      findVmById: jest.fn(async (id: string) => store.vms.get(id) ?? null),
+      findVmWithDetails: jest.fn(async (id: string) => store.vms.get(id) ?? null),
+      findVms: jest.fn(async (skip: number, take: number) => {
+        const vms = Array.from(store.vms.values());
+        vms.sort((a: any, b: any) => b.createdAt - a.createdAt);
+        return vms.slice(skip || 0, (skip || 0) + (take || 50)).map((v: any) => ({ ...v, user: store.users.get(v.userId) ?? { email: 'unknown', name: null } }));
+      }),
+      updateVm: jest.fn(async (id: string, data: any) => {
+        const v = store.vms.get(id);
+        if (!v) throw new NotFoundException();
+        Object.assign(v, data);
+        return v;
+      }),
+      deleteVm: jest.fn(async (id: string) => { store.vms.delete(id); }),
+      // Nodes
+      countNodes: jest.fn(async () => store.nodes.size),
+      findNodes: jest.fn(async () => Array.from(store.nodes.values()).map((n: any) => ({ ...n, inventory: null, storagePools: [] }))),
+      findNodeById: jest.fn(async (id: string) => {
+        const n = store.nodes.get(id);
+        if (!n) return null;
+        return { ...n, inventory: null, storagePools: [], vms: [] };
+      }),
+      findNodeByProxmoxId: jest.fn(async (proxmoxNodeId: string) => {
+        for (const n of store.nodes.values()) {
+          if ((n as any).proxmoxNodeId === proxmoxNodeId) return { ...n, inventory: null, storagePools: [], vms: [] };
+        }
+        return null;
+      }),
+      findFirstActiveNode: jest.fn(async () => null),
+      createNode: jest.fn(async (data: any) => {
+        const n = { id: `n-${store.nodes.size + 1}`, ...data, isActive: true, createdAt: new Date(), updatedAt: new Date() };
+        store.nodes.set(n.id, n);
+        return n;
+      }),
+      updateNode: jest.fn(async (id: string, data: any) => {
+        const n = store.nodes.get(id);
+        if (!n) throw new NotFoundException();
+        Object.assign(n, data);
+        return n;
+      }),
+      // Wallets
+      countWallets: jest.fn(async () => store.wallets.size),
+      aggregateWalletBalance: jest.fn(async () => {
+        let total = 0;
+        for (const w of store.wallets.values()) total += (w as any).balance;
+        return { _sum: { balance: total } };
+      }),
+      upsertWallet: jest.fn(async (userId: string, create: any, update: any) => {
+        const existing = store.wallets.get(userId);
+        if (existing) {
+          existing.balance += (update.balance as any).increment || 0;
+          return existing;
+        }
+        const w = { id: `w-${userId}`, ...create };
+        store.wallets.set(userId, w);
+        return w;
+      }),
+      // Transactions
+      createTransaction: jest.fn(async (data: any) => {
+        const t = { id: `tx-${store.transactions.size + 1}`, ...data };
+        store.transactions.set(t.id, t);
+        return t;
+      }),
+      // Settings
+      findSettings: jest.fn(async () => Array.from(store.settings.values())),
+      findSettingByKey: jest.fn(async (key: string) => store.settings.get(key) ?? null),
+      upsertSetting: jest.fn(async (key: string, value: string) => {
+        const existing = store.settings.get(key);
+        if (existing) { existing.value = value; return existing; }
+        const s = { id: `s-${store.settings.size + 1}`, key, value };
+        store.settings.set(key, s);
+        return s;
+      }),
+      deleteSetting: jest.fn(async (key: string) => { store.settings.delete(key); }),
+      findSettingsByPrefix: jest.fn(async (prefix: string) => {
+        return Array.from(store.settings.values()).filter((s: any) => s.key.startsWith(prefix));
+      }),
+      // AuditLog
+      findAuditLogs: jest.fn(async (skip: number, take: number) => {
+        const logs = Array.from(store.auditLogs.values());
+        logs.sort((a: any, b: any) => b.createdAt - a.createdAt);
+        return logs.slice(skip || 0, (skip || 0) + (take || 100)).map((l: any) => ({
+          ...l, user: store.users.get(l.userId) ?? { email: 'unknown', name: null },
+        }));
+      }),
+      countAuditLogs: jest.fn(async () => store.auditLogs.size),
+      // Roles
+      findRoleByName: jest.fn(async (name: string) => {
+        for (const r of store.roles.values()) {
+          if ((r as any).name === name) return r;
+        }
+        return null;
+      }),
+      findRoleById: jest.fn(async (id: string) => {
+        for (const r of store.roles.values()) {
+          if ((r as any).id === id) return r;
+        }
+        return null;
+      }),
+      findRoles: jest.fn(async () => Array.from(store.roles.values()).map((r: any) => ({
+        ...r, permissions: [], _count: { users: 0 },
+      }))),
+      createRole: jest.fn(async (data: any) => {
+        const r = { id: `r-${store.roles.size + 1}`, ...data };
+        store.roles.set(r.name, r);
+        return r;
+      }),
+      upsertRole: jest.fn(async (where: any, create: any) => {
+        const name = where.name;
+        const existing = store.roles.get(name);
+        if (existing) { Object.assign(existing, {}); return existing; }
+        const r = { id: `r-${store.roles.size + 1}`, ...create };
+        store.roles.set(r.name, r);
+        return r;
+      }),
+      updateRole: jest.fn(async (id: string, data: any) => {
+        for (const r of store.roles.values()) {
+          if ((r as any).id === id) { Object.assign(r, data); return r; }
+        }
+        throw new NotFoundException();
+      }),
+      deleteRole: jest.fn(async (id: string) => {
+        for (const [name, r] of store.roles) {
+          if ((r as any).id === id) { store.roles.delete(name); return; }
+        }
+      }),
+      findRoleWithPermissions: jest.fn(async (id: string) => {
+        for (const r of store.roles.values()) {
+          if ((r as any).id === id) return { ...r, permissions: [], _count: { users: 0 } };
+        }
+        return null;
+      }),
+      // UserRole
+      findUserRole: jest.fn(async (userId: string, roleId: string) => {
+        for (const ur of store.userRoles.values()) {
+          if ((ur as any).userId === userId && (ur as any).roleId === roleId) return ur;
+        }
+        return null;
+      }),
+      createUserRole: jest.fn(async (data: any) => {
+        const ur = { id: `ur-${store.userRoles.size + 1}`, ...data };
+        store.userRoles.set(ur.id, ur);
+        return ur;
+      }),
+      deleteUserRoles: jest.fn(async (userId: string, roleId: string) => {
+        const toDelete: string[] = [];
+        for (const [id, ur] of store.userRoles) {
+          if ((ur as any).userId === userId && (ur as any).roleId === roleId) toDelete.push(id);
+        }
+        for (const id of toDelete) store.userRoles.delete(id);
+        return { count: toDelete.length };
+      }),
+      // ResourcePool / Allocation
+      findPoolById: jest.fn(),
+      findPoolByUser: jest.fn(),
+      findResourceAllocationByVm: jest.fn(async (vmId: string) => store.allocations.get(vmId) ?? null),
+      findResourceAllocationsByPool: jest.fn(),
+      // Templates
+      findTemplateById: jest.fn(),
+      findTemplates: jest.fn(),
+      countTemplates: jest.fn(),
+      findActiveTemplates: jest.fn(),
+      findAllTemplates: jest.fn(),
+      createTemplate: jest.fn(),
+      updateTemplate: jest.fn(),
+      deleteTemplate: jest.fn(),
+      // Permissions
+      findPermissions: jest.fn(),
+      findPermissionById: jest.fn(),
+      // RolePermission
+      findRolePermission: jest.fn(),
+      upsertRolePermission: jest.fn(),
+      deleteRolePermission: jest.fn(),
+      // SupportTicket
+      findTickets: jest.fn(),
+      findTicketById: jest.fn(),
+      findTicketWithMessages: jest.fn(),
+      createTicketMessage: jest.fn(),
+      updateTicket: jest.fn(),
+      // Notifications
+      createNotification: jest.fn(),
+      createManyNotifications: jest.fn(),
+    };
+
     mockPrisma = {
-      user: {
-        count: jest.fn((args?: any) => {
-          let users = Array.from(store.users.values());
-          if (args?.where?.status) users = users.filter((u: any) => u.status === args.where.status);
-          return users.length;
-        }),
-        findMany: jest.fn(({ skip, take, orderBy, include, where }: any) => {
-          let users = Array.from(store.users.values());
-          if (orderBy?.createdAt === 'desc') users.sort((a: any, b: any) => b.createdAt - a.createdAt);
-          if (where?.isActive !== undefined) users = users.filter((u: any) => u.isActive === where.isActive);
-          const result = users.slice(skip || 0, (skip || 0) + (take || 50));
-          if (include?._count) return result.map((u: any) => ({ ...u, _count: { vms: 0 } }));
-          return result;
-        }),
-        findUnique: jest.fn(({ where, include }: any) => {
-          const u = store.users.get(where.id);
-          if (!u) return null;
-          if (include?.wallet) return { ...u, wallet: store.wallets.get(where.id) ?? null, vms: [], _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
-          if (include?._count) return { ...u, _count: { vms: 0, sessions: 0, apiKeys: 0, sshKeys: 0 } };
-          return u;
-        }),
-        create: jest.fn(({ data }: any) => {
-          const u = { id: `u-${store.users.size + 1}`, ...data, isActive: true, createdAt: new Date(), updatedAt: new Date() };
-          store.users.set(u.id, u); return u;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const u = store.users.get(where.id);
-          if (!u) throw new NotFoundException();
-          Object.assign(u, data); return u;
-        }),
-      },
-      vm: {
-        count: jest.fn((args?: any) => {
-          let vms = Array.from(store.vms.values());
-          if (args?.where?.status) vms = vms.filter((v: any) => v.status === args.where.status);
-          return vms.length;
-        }),
-        findMany: jest.fn(({ skip, take, orderBy, include }: any) => {
-          const vms = Array.from(store.vms.values());
-          if (orderBy?.createdAt === 'desc') vms.sort((a: any, b: any) => b.createdAt - a.createdAt);
-          const result = vms.slice(skip || 0, (skip || 0) + (take || 50));
-          if (include?.user) return result.map((v: any) => ({ ...v, user: store.users.get(v.userId) ?? { email: 'unknown', name: null } }));
-          return result;
-        }),
-        findUnique: jest.fn(({ where }: any) => store.vms.get(where.id) ?? null),
-        update: jest.fn(({ where, data }: any) => {
-          const v = store.vms.get(where.id);
-          if (!v) throw new NotFoundException();
-          Object.assign(v, data); return v;
-        }),
-        delete: jest.fn(({ where }: any) => { store.vms.delete(where.id); }),
-      },
-      node: {
-        count: jest.fn(() => store.nodes.size),
-        findMany: jest.fn(({ include }: any) => Array.from(store.nodes.values()).map((n: any) => ({
-          ...n, inventory: null, storagePools: [],
-          ...(include?.inventory ? { inventory: null } : {}),
-          ...(include?.storagePools ? { storagePools: [] } : {}),
-        }))),
-        findUnique: jest.fn(({ where, include }: any) => {
-          if (where.proxmoxNodeId) {
-            for (const n of store.nodes.values()) {
-              if ((n as any).proxmoxNodeId === where.proxmoxNodeId) return { ...n, inventory: null, storagePools: [], vms: [], ...(include || {}) };
-            }
-            return null;
-          }
-          const n = store.nodes.get(where.id);
-          if (!n) return null;
-          return { ...n, inventory: null, storagePools: [], vms: [], ...(include || {}) };
-        }),
-        create: jest.fn(({ data }: any) => {
-          const n = { id: `n-${store.nodes.size + 1}`, ...data, isActive: true, createdAt: new Date(), updatedAt: new Date() };
-          store.nodes.set(n.id, n); return n;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const n = store.nodes.get(where.id);
-          if (!n) throw new NotFoundException();
-          Object.assign(n, data); return n;
-        }),
-      },
-      wallet: {
-        count: jest.fn(() => store.wallets.size),
-        aggregate: jest.fn(() => {
-          let total = 0;
-          for (const w of store.wallets.values()) total += (w as any).balance;
-          return { _sum: { balance: total } };
-        }),
-        upsert: jest.fn(({ where, create, update }: any) => {
-          const existing = store.wallets.get(where.userId);
-          if (existing) { existing.balance += (update.balance as any).increment || 0; return existing; }
-          const w = { id: `w-${where.userId}`, ...create };
-          store.wallets.set(where.userId, w); return w;
-        }),
-      },
-      transaction: {
-        create: jest.fn(({ data }: any) => {
-          const t = { id: `tx-${store.transactions.size + 1}`, ...data };
-          store.transactions.set(t.id, t); return t;
-        }),
-      },
-      setting: {
-        findMany: jest.fn(() => Array.from(store.settings.values())),
-        findUnique: jest.fn(({ where }: any) => store.settings.get(where.key) ?? null),
-        upsert: jest.fn(({ where, create, update }: any) => {
-          const existing = store.settings.get(where.key);
-          if (existing) { existing.value = update.value; return existing; }
-          const s = { id: `s-${store.settings.size + 1}`, ...create };
-          store.settings.set(where.key, s); return s;
-        }),
-        delete: jest.fn(({ where }: any) => { store.settings.delete(where.key); }),
-      },
       auditLog: {
-        count: jest.fn(() => store.auditLogs.size),
-        findMany: jest.fn(({ skip, take, orderBy, include }: any) => {
-          const logs = Array.from(store.auditLogs.values());
-          if (orderBy?.createdAt === 'desc') logs.sort((a: any, b: any) => b.createdAt - a.createdAt);
-          const result = logs.slice(skip || 0, (skip || 0) + (take || 100));
-          if (include?.user) return result.map((l: any) => ({ ...l, user: store.users.get((l as any).userId) ?? { email: 'unknown', name: null } }));
-          return result;
-        }),
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
-          store.auditLogs.set(log.id, log); return log;
+          store.auditLogs.set(log.id, log);
+          return log;
         }),
-      },
-      role: {
-        findUnique: jest.fn(({ where }: any) => {
-          for (const r of store.roles.values()) {
-            if ((r as any).name === where.name || (r as any).id === where.id) return r;
-          }
-          return null;
-        }),
-        upsert: jest.fn(({ where, create, update }: any) => {
-          const existing = store.roles.get(where.name);
-          if (existing) { Object.assign(existing, update); return existing; }
-          const r = { id: `r-${store.roles.size + 1}`, ...create };
-          store.roles.set(r.name, r); return r;
-        }),
-        findMany: jest.fn(({ include }: any) => Array.from(store.roles.values()).map((r: any) => ({
-          ...r, permissions: [], _count: { users: 0 },
-          ...(include?.permissions ? { permissions: [] } : {}),
-        }))),
-      },
-      userRole: {
-        findFirst: jest.fn(({ where }: any) => {
-          for (const ur of store.userRoles.values()) {
-            if ((ur as any).userId === where.userId) {
-              if (where.role?.name) {
-                const r = store.roles.get((ur as any).roleId);
-                if (r && (r as any).name === where.role.name) return ur;
-              }
-              if (where.roleId && (ur as any).roleId === where.roleId) return ur;
-            }
-          }
-          return null;
-        }),
-        findUnique: jest.fn(({ where }: any) => {
-          for (const ur of store.userRoles.values()) {
-            if ((ur as any).userId === where.userId_roleId?.userId && (ur as any).roleId === where.userId_roleId?.roleId) return ur;
-          }
-          return null;
-        }),
-        create: jest.fn(({ data }: any) => {
-          const ur = { id: `ur-${store.userRoles.size + 1}`, ...data };
-          store.userRoles.set(ur.id, ur); return ur;
-        }),
-        deleteMany: jest.fn(({ where }: any) => {
-          const toDelete: string[] = [];
-          for (const [id, ur] of store.userRoles) {
-            if ((ur as any).userId === where.userId && (ur as any).roleId === where.roleId) toDelete.push(id);
-          }
-          for (const id of toDelete) store.userRoles.delete(id);
-          return { count: toDelete.length };
-        }),
-      },
-      resourceAllocation: {
-        findUnique: jest.fn(({ where }: any) => store.allocations.get(where.vmId) ?? null),
-        delete: jest.fn(({ where }: any) => { store.allocations.delete(where.vmId); }),
       },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
@@ -222,6 +265,7 @@ describe('AdminService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
+        { provide: AdminRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ProxmoxService, useValue: { refreshConfig: jest.fn() } },
         { provide: ProxmoxJobService, useValue: { enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }) } },

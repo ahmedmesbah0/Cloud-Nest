@@ -7,6 +7,7 @@ import { VmModule } from '../vms/vm.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 import { MailModule } from '../mail/mail.module';
 import { MetricsModule } from '../metrics/metrics.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { ReportJobConsumer } from '../billing/report-job.consumer';
 import { MetricsJobConsumer } from '../metrics/metrics-job.consumer';
 
@@ -17,6 +18,7 @@ import { MetricsJobConsumer } from '../metrics/metrics-job.consumer';
     ResourcePoolModule,
     MailModule,
     MetricsModule,
+    NotificationsModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: {

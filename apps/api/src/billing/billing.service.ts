@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { BillingRepository } from './billing.repository';
 import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
@@ -17,6 +18,7 @@ export class BillingService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly billingRepo: BillingRepository,
     private readonly walletService: WalletService,
     private readonly jobService: ProxmoxJobService,
     private readonly poolService: ResourcePoolService,
@@ -26,10 +28,7 @@ export class BillingService {
   async runHourlyBilling(): Promise<{ billed: number; suspended: number; deleted: number }> {
     const result = { billed: 0, suspended: 0, deleted: 0 };
 
-    const activeVms = await this.prisma.vm.findMany({
-      where: { status: { in: ['running', 'stopped'] } },
-      include: { user: true },
-    });
+    const activeVms = await this.billingRepo.findVmsByStatus(['running', 'stopped']);
 
     for (const vm of activeVms) {
       try {
@@ -40,9 +39,7 @@ export class BillingService {
       }
     }
 
-    const suspendedVms = await this.prisma.vm.findMany({
-      where: { status: 'suspended' },
-    });
+    const suspendedVms = await this.billingRepo.findVmsByStatus(['suspended']);
 
     for (const vm of suspendedVms) {
       const suspendedAt = vm.suspendedAt ?? vm.updatedAt;
@@ -61,7 +58,7 @@ export class BillingService {
   }
 
   private async billVm(vmId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.billingRepo.findVmById(vmId);
     if (!vm || vm.status === 'provisioning') return;
 
     const hourlyCost = this.calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
@@ -104,30 +101,39 @@ export class BillingService {
     lineItems: Array<{ description: string; quantity: number; unitPrice: number; total: number }>,
   ) {
     await this.prisma.$transaction(async (tx: any) => {
-      const invoice = await tx.invoice.create({
-        data: {
-          userId,
-          amount,
-          status: 'paid',
-          paidAt: new Date(),
-          lineItems: {
-            create: lineItems,
-          },
+      const invoice = await this.billingRepo.createInvoice({
+        userId,
+        amount,
+        status: 'paid',
+        paidAt: new Date(),
+        lineItems: {
+          create: lineItems,
         },
-      });
+      }, tx);
 
-      const wallet = await tx.wallet.findUnique({ where: { userId } });
+      const wallet = await this.billingRepo.findWalletByUser(userId, tx);
       if (wallet) {
-        await tx.transaction.updateMany({
-          where: {
+        await this.billingRepo.updateTransactions(
+          {
             walletId: wallet.id,
             amount: -amount,
             invoiceId: null,
             type: 'debit',
           },
-          data: { invoiceId: invoice.id },
-        });
+          { invoiceId: invoice.id },
+          tx,
+        );
       }
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'invoice.create',
+          resource: 'invoice',
+          resourceId: invoice.id,
+          metadata: { amount, lineItemCount: lineItems.length } as any,
+        },
+      });
 
       return invoice;
     });
@@ -142,14 +148,11 @@ export class BillingService {
   }
 
   async enterGracePeriod(vmId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.billingRepo.findVmById(vmId);
     if (!vm) return;
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vm.update({
-        where: { id: vmId },
-        data: { status: 'suspended', suspendedAt: new Date() },
-      });
+      await this.billingRepo.updateVm(vmId, { status: 'suspended', suspendedAt: new Date() }, tx);
 
       await tx.auditLog.create({
         data: {
@@ -166,14 +169,11 @@ export class BillingService {
   }
 
   async scheduleDeletion(vmId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.billingRepo.findVmById(vmId);
     if (!vm) return;
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vm.update({
-        where: { id: vmId },
-        data: { status: 'scheduled_deletion' },
-      });
+      await this.billingRepo.updateVm(vmId, { status: 'scheduled_deletion' }, tx);
 
       await tx.auditLog.create({
         data: {
@@ -197,10 +197,7 @@ export class BillingService {
       });
     } else {
       await this.poolService.releaseResources(vm.id);
-      await this.prisma.vm.update({
-        where: { id: vmId },
-        data: { status: 'deleted' },
-      });
+      await this.billingRepo.updateVm(vmId, { status: 'deleted' });
     }
 
     this.logger.log(`VM ${vmId} deletion scheduled/queued`);
@@ -209,16 +206,14 @@ export class BillingService {
   async reconcile(): Promise<{ checked: number; fixed: number; errors: string[] }> {
     const result = { checked: 0, fixed: 0, errors: [] as string[] };
 
-    const dbVms = await this.prisma.vm.findMany({
-      where: { status: { in: ['running', 'stopped', 'suspended'] } },
-    });
+    const dbVms = await this.billingRepo.findVmsByStatus(['running', 'stopped', 'suspended']);
 
     for (const vm of dbVms) {
       result.checked++;
       if (!vm.proxmoxId || !vm.nodeId) continue;
 
       try {
-        const nodeRecord = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+        const nodeRecord = await this.billingRepo.findNodeById(vm.nodeId);
         if (!nodeRecord) continue;
 
         const status = await this.proxmox.getVmStatus(nodeRecord.proxmoxNodeId, vm.proxmoxId);
@@ -233,10 +228,7 @@ export class BillingService {
         }
 
         if (desiredStatus && desiredStatus !== vm.status) {
-          await this.prisma.vm.update({
-            where: { id: vm.id },
-            data: { status: desiredStatus as any },
-          });
+          await this.billingRepo.updateVm(vm.id, { status: desiredStatus as any });
           result.fixed++;
           this.logger.warn(`Reconciled VM ${vm.id}: DB was ${vm.status}, Proxmox says ${status.status}, set to ${desiredStatus}`);
         }
@@ -249,7 +241,7 @@ export class BillingService {
   }
 
   async getVmBillingEstimate(vmId: string): Promise<{ hourlyCost: number; dailyCost: number; monthlyCost: number }> {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.billingRepo.findVmById(vmId);
     if (!vm) throw new Error('VM not found');
 
     const hourly = this.calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
@@ -262,36 +254,27 @@ export class BillingService {
 
   async getUsageCharges(userId: string, limit = 100) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
-    return this.prisma.transaction.findMany({
-      where: {
+    return this.billingRepo.findTransactions(
+      {
         walletId: wallet.id,
         type: 'debit',
         reference: { contains: ':hourly' },
       },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+      { createdAt: 'desc' },
+      limit,
+    );
   }
 
   async listInvoices(userId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const [invoices, total] = await Promise.all([
-      this.prisma.invoice.findMany({
-        where: { userId },
-        include: { lineItems: true },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.invoice.count({ where: { userId } }),
-    ]);
+    const { invoices, total } = await this.billingRepo.findInvoices(userId, skip, limit);
     return { invoices, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async getInvoice(userId: string, invoiceId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id: invoiceId },
-      include: { lineItems: true, transaction: true },
+    const invoice = await this.billingRepo.findInvoiceById(invoiceId, {
+      lineItems: true,
+      transaction: true,
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
     if (invoice.userId !== userId) throw new NotFoundException('Invoice not found');
@@ -299,9 +282,9 @@ export class BillingService {
   }
 
   async getInvoicePdf(invoiceId: string, userId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id: invoiceId },
-      include: { lineItems: true, user: { select: { name: true, email: true } } },
+    const invoice = await this.billingRepo.findInvoiceById(invoiceId, {
+      lineItems: true,
+      user: { select: { name: true, email: true } },
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
     if (invoice.userId !== userId) throw new ForbiddenException('Not your invoice');
@@ -319,12 +302,9 @@ export class BillingService {
   }
 
   async getAdminInvoicePdf(invoiceId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id: invoiceId },
-      include: {
-        lineItems: true,
-        user: { select: { name: true, email: true } },
-      },
+    const invoice = await this.billingRepo.findInvoiceById(invoiceId, {
+      lineItems: true,
+      user: { select: { name: true, email: true } },
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
     return {

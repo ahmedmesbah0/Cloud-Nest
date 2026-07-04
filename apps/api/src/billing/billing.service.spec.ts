@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BillingService } from './billing.service';
+import { BillingRepository } from './billing.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
@@ -8,6 +9,7 @@ import { ProxmoxService } from '../proxmox/proxmox.service';
 
 describe('BillingService', () => {
   let service: BillingService;
+  let mockRepo: any;
   let mockPrisma: any;
   let mockWalletService: any;
 
@@ -50,53 +52,71 @@ describe('BillingService', () => {
       credit: jest.fn(),
     };
 
-    mockPrisma = {
-      vm: {
-        findUnique: jest.fn(({ where }: any) => store.vms.get(where.id) ?? null),
-        findMany: jest.fn(({ where }: any) => {
-          let vms = Array.from(store.vms.values());
-          if (where?.status?.in) {
-            vms = vms.filter((v: any) => where.status.in.includes(v.status));
+    mockRepo = {
+      findVmsByStatus: jest.fn(async (statuses: string[]) => {
+        return Array.from(store.vms.values()).filter((v: any) => statuses.includes(v.status));
+      }),
+      findVmById: jest.fn(async (id: string) => store.vms.get(id) ?? null),
+      updateVm: jest.fn(async (id: string, data: any) => {
+        const vm = store.vms.get(id);
+        if (!vm) throw new Error('Not found');
+        Object.assign(vm, data);
+        return vm;
+      }),
+      findNodeById: jest.fn(),
+      findWalletByUser: jest.fn(async (userId: string) => store.wallets.get(userId) ?? null),
+      findTransactions: jest.fn(async (where: any) => {
+        return Array.from(store.transactions.values()).filter((t: any) => {
+          for (const [key, val] of Object.entries(where)) {
+            if (typeof val === 'object' && val !== null && 'contains' in val) {
+              if (!(t as any)[key]?.includes((val as any).contains)) return false;
+            } else if ((t as any)[key] !== val) return false;
           }
-          return vms;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const vm = store.vms.get(where.id);
-          if (!vm) throw new Error('Not found');
-          Object.assign(vm, data);
-          return vm;
-        }),
-      },
+          return true;
+        });
+      }),
+      updateTransactions: jest.fn(async (_where: any, _data: any) => {}),
+      createInvoice: jest.fn(async (data: any, _tx?: any) => {
+        const inv = { id: `inv-${store.invoices.size + 1}`, ...data };
+        store.invoices.set(inv.id, inv);
+        if (data.lineItems?.create) {
+          for (const li of data.lineItems.create) {
+            const item = { id: `li-${store.invoiceLineItems.size + 1}`, invoiceId: inv.id, ...li };
+            store.invoiceLineItems.set(item.id, item);
+          }
+        }
+        return inv;
+      }),
+      findInvoiceById: jest.fn(async (id: string, include?: any) => {
+        const inv = store.invoices.get(id);
+        if (!inv) return null;
+        if (include?.lineItems) {
+          return {
+            ...inv,
+            lineItems: Array.from(store.invoiceLineItems.values()).filter((li: any) => li.invoiceId === inv.id),
+          };
+        }
+        if (include?.user) {
+          return { ...inv, user: { name: 'Test', email: 'test@test.com' } };
+        }
+        return inv;
+      }),
+      findInvoices: jest.fn(async (userId: string, skip: number, take: number) => {
+        const invoices = Array.from(store.invoices.values())
+          .filter((inv: any) => inv.userId === userId)
+          .sort((a: any, b: any) => b.createdAt - a.createdAt)
+          .slice(skip, skip + take);
+        return { invoices, total: invoices.length };
+      }),
+    };
+
+    mockPrisma = {
       auditLog: {
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
           store.auditLogs.set(log.id, log);
           return log;
         }),
-      },
-      invoice: {
-        create: jest.fn(({ data }: any) => {
-          const inv = { id: `inv-${store.invoices.size + 1}`, ...data };
-          store.invoices.set(inv.id, inv);
-          return inv;
-        }),
-        findUnique: jest.fn(),
-      },
-      invoiceLineItem: {
-        create: jest.fn(),
-      },
-      transaction: {
-        findMany: jest.fn(),
-        updateMany: jest.fn(),
-      },
-      wallet: {
-        findUnique: jest.fn(),
-      },
-      node: {
-        findUnique: jest.fn(),
-      },
-      resourceAllocation: {
-        findMany: jest.fn(),
       },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
@@ -116,6 +136,7 @@ describe('BillingService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BillingService,
+        { provide: BillingRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
         { provide: WalletService, useValue: mockWalletService },
         { provide: ProxmoxJobService, useValue: mockJobService },
@@ -221,17 +242,28 @@ describe('BillingService', () => {
     });
   });
 
+  describe('audit logs', () => {
+    it('createInvoice writes audit log inside $transaction', async () => {
+      store.vms.set('vm-1', {
+        id: 'vm-1', userId: 'user-1', name: 'test-vm', status: 'running',
+        cpuCores: 2, memoryMb: 4096, diskGb: 50,
+        createdAt: new Date(), updatedAt: new Date(),
+      });
+      store.wallets.set('user-1', { id: 'wallet-1', userId: 'user-1', balance: 100000 });
+
+      await service.runHourlyBilling();
+
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'invoice.create', resource: 'invoice' }),
+      });
+    });
+  });
+
   describe('getUsageCharges', () => {
     it('returns hourly debit transactions', async () => {
       store.transactions.set('tx-1', { id: 'tx-1', walletId: 'wallet-user-1', type: 'debit', reference: 'vm:vm-1:hourly', amount: -200 });
       store.transactions.set('tx-2', { id: 'tx-2', walletId: 'wallet-user-1', type: 'credit', reference: 'voucher:CODE', amount: 1000 });
       store.wallets.set('user-1', { id: 'wallet-user-1', balance: 800 });
-
-      mockPrisma.transaction.findMany = jest.fn(() =>
-        Array.from(store.transactions.values()).filter(
-          (t: any) => t.reference?.includes(':hourly'),
-        ),
-      );
 
       const charges = await service.getUsageCharges('user-1');
       expect(charges).toHaveLength(1);

@@ -1,25 +1,24 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { WalletRepository } from './wallet.repository';
 
 @Injectable()
 export class WalletService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly walletRepo: WalletRepository,
+  ) {}
 
   async getOrCreateWallet(userId: string) {
-    let wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    let wallet = await this.walletRepo.findByUser(userId);
     if (!wallet) {
-      wallet = await this.prisma.wallet.create({ data: { userId } });
+      wallet = await this.walletRepo.create({ userId });
     }
     return wallet;
   }
 
   async getWallet(userId: string) {
-    const wallet = await this.prisma.wallet.findUnique({
-      where: { userId },
-      include: {
-        transactions: { orderBy: { createdAt: 'desc' }, take: 50 },
-      },
-    });
+    const wallet = await this.walletRepo.findByUser(userId, true);
     if (!wallet) throw new NotFoundException('Wallet not found');
     return wallet;
   }
@@ -33,25 +32,20 @@ export class WalletService {
     if (amount <= 0) throw new BadRequestException('Amount must be positive');
 
     return this.prisma.$transaction(async (tx: any) => {
-      let wallet = await tx.wallet.findUnique({ where: { userId } });
+      let wallet = await this.walletRepo.findByUser(userId, false, tx);
       if (!wallet) {
-        wallet = await tx.wallet.create({ data: { userId } });
+        wallet = await this.walletRepo.create({ userId }, tx);
       }
 
-      await tx.wallet.update({
-        where: { userId },
-        data: { balance: { increment: amount } },
-      });
+      await this.walletRepo.update(userId, { balance: { increment: amount } }, tx);
 
-      const txRecord = await tx.transaction.create({
-        data: {
-          walletId: wallet.id,
-          amount,
-          type: 'credit',
-          reference,
-          metadata: (metadata ?? {}) as any,
-        },
-      });
+      const txRecord = await this.walletRepo.createTransaction({
+        walletId: wallet.id,
+        amount,
+        type: 'credit',
+        reference,
+        metadata: (metadata ?? {}) as any,
+      }, tx);
 
       await tx.auditLog.create({
         data: {
@@ -71,9 +65,9 @@ export class WalletService {
     if (amount <= 0) throw new BadRequestException('Amount must be positive');
 
     return this.prisma.$transaction(async (tx: any) => {
-      let wallet = await tx.wallet.findUnique({ where: { userId } });
+      let wallet = await this.walletRepo.findByUser(userId, false, tx);
       if (!wallet) {
-        wallet = await tx.wallet.create({ data: { userId } });
+        wallet = await this.walletRepo.create({ userId }, tx);
       }
 
       if (wallet.balance < amount) {
@@ -82,20 +76,15 @@ export class WalletService {
         );
       }
 
-      await tx.wallet.update({
-        where: { userId },
-        data: { balance: { decrement: amount } },
-      });
+      await this.walletRepo.update(userId, { balance: { decrement: amount } }, tx);
 
-      const txRecord = await tx.transaction.create({
-        data: {
-          walletId: wallet.id,
-          amount: -amount,
-          type: 'debit',
-          reference,
-          metadata: (metadata ?? {}) as any,
-        },
-      });
+      const txRecord = await this.walletRepo.createTransaction({
+        walletId: wallet.id,
+        amount: -amount,
+        type: 'debit',
+        reference,
+        metadata: (metadata ?? {}) as any,
+      }, tx);
 
       await tx.auditLog.create({
         data: {
@@ -113,10 +102,6 @@ export class WalletService {
 
   async listTransactions(userId: string, limit = 50) {
     const wallet = await this.getOrCreateWallet(userId);
-    return this.prisma.transaction.findMany({
-      where: { walletId: wallet.id },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+    return this.walletRepo.findTransactions(wallet.id, limit);
   }
 }

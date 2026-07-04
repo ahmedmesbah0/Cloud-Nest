@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResourcePoolRepository } from './resource-pool.repository';
 
 export interface PoolAllocation {
   poolId: string;
@@ -19,7 +20,10 @@ export interface PoolUsage {
 
 @Injectable()
 export class ResourcePoolService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly poolRepo: ResourcePoolRepository,
+  ) {}
 
   async createPool(data: {
     userId: string;
@@ -28,53 +32,52 @@ export class ResourcePoolService {
     totalDiskGb: number;
     totalIps?: number;
   }) {
-    const pool = await this.prisma.resourcePool.create({ data });
+    const pool = await this.prisma.$transaction(async (tx: any) => {
+      const p = await this.poolRepo.create(data, tx);
+      await tx.auditLog.create({
+        data: {
+          userId: data.userId,
+          action: 'resource-pool.create',
+          resource: 'resourcePool',
+          resourceId: p.id,
+        },
+      });
+      return p;
+    });
     return pool;
   }
 
   async getPool(poolId: string) {
-    const pool = await this.prisma.resourcePool.findUnique({
-      where: { id: poolId },
-      include: { allocations: true },
-    });
+    const pool = await this.poolRepo.findById(poolId, true);
     if (!pool) throw new BadRequestException('Resource pool not found');
     return pool;
   }
 
   async getUserPools(userId: string) {
-    return this.prisma.resourcePool.findMany({
-      where: { userId },
-      include: { allocations: true },
-    });
+    return this.poolRepo.findMany(userId);
   }
 
   async getPoolUsage(poolId: string): Promise<PoolUsage> {
-    const pool = await this.prisma.resourcePool.findUnique({
-      where: { id: poolId },
-      include: { allocations: true },
-    });
+    const pool = await this.poolRepo.findById(poolId, true);
     if (!pool) throw new BadRequestException('Resource pool not found');
 
     return {
-      cores: pool.allocations.reduce((sum: number, a) => sum + a.cores, 0),
-      memoryMb: pool.allocations.reduce((sum: number, a) => sum + a.memoryMb, 0),
-      diskGb: pool.allocations.reduce((sum: number, a) => sum + a.diskGb, 0),
-      ips: pool.allocations.reduce((sum: number, a) => sum + (a.ips ?? 0), 0),
+      cores: pool.allocations.reduce((sum: number, a: any) => sum + a.cores, 0),
+      memoryMb: pool.allocations.reduce((sum: number, a: any) => sum + a.memoryMb, 0),
+      diskGb: pool.allocations.reduce((sum: number, a: any) => sum + a.diskGb, 0),
+      ips: pool.allocations.reduce((sum: number, a: any) => sum + (a.ips ?? 0), 0),
     };
   }
 
   async getPoolAvailable(poolId: string): Promise<PoolUsage> {
-    const pool = await this.prisma.resourcePool.findUnique({
-      where: { id: poolId },
-      include: { allocations: true },
-    });
+    const pool = await this.poolRepo.findById(poolId, true);
     if (!pool) throw new BadRequestException('Resource pool not found');
 
     const used = {
-      cores: pool.allocations.reduce((sum: number, a) => sum + a.cores, 0),
-      memoryMb: pool.allocations.reduce((sum: number, a) => sum + a.memoryMb, 0),
-      diskGb: pool.allocations.reduce((sum: number, a) => sum + a.diskGb, 0),
-      ips: pool.allocations.reduce((sum: number, a) => sum + (a.ips ?? 0), 0),
+      cores: pool.allocations.reduce((sum: number, a: any) => sum + a.cores, 0),
+      memoryMb: pool.allocations.reduce((sum: number, a: any) => sum + a.memoryMb, 0),
+      diskGb: pool.allocations.reduce((sum: number, a: any) => sum + a.diskGb, 0),
+      ips: pool.allocations.reduce((sum: number, a: any) => sum + (a.ips ?? 0), 0),
     };
 
     return {
@@ -94,23 +97,36 @@ export class ResourcePoolService {
       totalIps?: number;
     },
   ) {
-    const pool = await this.prisma.resourcePool.update({
-      where: { id: poolId },
-      data,
+    const pool = await this.prisma.$transaction(async (tx: any) => {
+      const p = await this.poolRepo.update(poolId, data, tx);
+      await tx.auditLog.create({
+        data: {
+          action: 'resource-pool.update',
+          resource: 'resourcePool',
+          resourceId: poolId,
+        },
+      });
+      return p;
     });
     return pool;
   }
 
   async deletePool(poolId: string) {
-    const pool = await this.prisma.resourcePool.findUnique({
-      where: { id: poolId },
-      include: { allocations: true },
-    });
+    const pool = await this.poolRepo.findById(poolId, true);
     if (!pool) throw new BadRequestException('Resource pool not found');
     if (pool.allocations.length > 0) {
       throw new BadRequestException('Cannot delete pool with active allocations');
     }
-    await this.prisma.resourcePool.delete({ where: { id: poolId } });
+    await this.prisma.$transaction(async (tx: any) => {
+      await this.poolRepo.delete(poolId, tx);
+      await tx.auditLog.create({
+        data: {
+          action: 'resource-pool.delete',
+          resource: 'resourcePool',
+          resourceId: poolId,
+        },
+      });
+    });
   }
 
   async allocateResources(
@@ -160,16 +176,14 @@ export class ResourcePoolService {
         throw new ForbiddenException(`Insufficient resources: ${errors.join('; ')}`);
       }
 
-      await tx.resourceAllocation.create({
-        data: {
-          poolId: allocation.poolId,
-          vmId: allocation.vmId,
-          cores: allocation.cores,
-          memoryMb: allocation.memoryMb,
-          diskGb: allocation.diskGb,
-          ips: allocation.ips ?? 0,
-        },
-      });
+      await this.poolRepo.createAllocation({
+        poolId: allocation.poolId,
+        vmId: allocation.vmId,
+        cores: allocation.cores,
+        memoryMb: allocation.memoryMb,
+        diskGb: allocation.diskGb,
+        ips: allocation.ips ?? 0,
+      }, tx);
 
       return { success: true, message: 'Resources allocated' };
     };
@@ -181,14 +195,58 @@ export class ResourcePoolService {
   }
 
   async releaseResources(vmId: string) {
-    const allocation = await this.prisma.resourceAllocation.findUnique({
-      where: { vmId },
-    });
+    const allocation = await this.poolRepo.findAllocationByVmId(vmId);
     if (!allocation) {
       return { success: true, message: 'No allocation found' };
     }
-    await this.prisma.resourceAllocation.delete({ where: { vmId } });
+    await this.prisma.$transaction(async (tx: any) => {
+      await this.poolRepo.deleteAllocation(vmId, tx);
+      const pool = await this.poolRepo.findById(allocation.poolId, false, tx);
+      await tx.auditLog.create({
+        data: {
+          userId: pool?.userId,
+          action: 'resource-pool.release',
+          resource: 'resourceAllocation',
+          resourceId: allocation.id,
+        },
+      });
+    });
     return { success: true, message: 'Resources released' };
+  }
+
+  async resizeAllocation(vmId: string, cores: number, memoryMb: number, diskGb: number, vmUserId: string) {
+    return this.prisma.$transaction(async (tx: any) => {
+      const poolRows: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number }> = await tx.$queryRawUnsafe(
+        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
+        vmUserId,
+      );
+      const pool = poolRows[0];
+      if (!pool) throw new Error('No resource pool found');
+
+      const usage: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
+        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb" FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
+        pool.id, vmId,
+      );
+      const used = usage[0];
+      const availCores = pool.totalCores - Number(used.cores);
+      const availMem = pool.totalMemoryMb - Number(used.memoryMb);
+      const availDisk = pool.totalDiskGb - Number(used.diskGb);
+
+      const currentAlloc: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
+        `SELECT cores, "memoryMb", "diskGb" FROM "ResourceAllocation" WHERE "vmId" = $1`,
+        vmId,
+      );
+      const old = currentAlloc[0];
+      if (old) {
+        const cpuDelta = cores - Number(old.cores);
+        const memDelta = memoryMb - Number(old.memoryMb);
+        const diskDelta = diskGb - Number(old.diskGb);
+        if (cpuDelta > availCores || memDelta > availMem || diskDelta > availDisk) {
+          throw new Error('Insufficient pool capacity for resize');
+        }
+      }
+      await this.poolRepo.updateAllocation(vmId, { cores, memoryMb, diskGb }, tx);
+    });
   }
 
   async canAllocate(

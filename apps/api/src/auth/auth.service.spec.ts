@@ -38,6 +38,8 @@ describe('AuthService', () => {
     userRoles: new Map<string, any>(),
   };
 
+  const mockAuditLogCreate = jest.fn().mockResolvedValue({});
+
   const mockTx = (tx?: any): any => tx || {
     user: {
       count: jest.fn(() => store.users.size),
@@ -54,6 +56,12 @@ describe('AuthService', () => {
         store.users.set(user.id, user);
         return user;
       }),
+      update: jest.fn((args: { where: { id: string }; data: any }) => {
+        const user = store.users.get(args.where.id);
+        if (!user) throw new Error('User not found');
+        Object.assign(user, args.data);
+        return user;
+      }),
     },
     userRole: {
       create: jest.fn((args: { data: { userId: string; roleId: string } }) => {
@@ -61,6 +69,24 @@ describe('AuthService', () => {
         store.userRoles.set(ur.id, ur);
         return ur;
       }),
+    },
+    session: {
+      deleteMany: jest.fn((args: { where: { userId?: string; refreshToken?: string } }) => {
+        if (args.where.userId) {
+          for (const [id, s] of store.sessions) {
+            if (s.userId === args.where.userId) store.sessions.delete(id);
+          }
+        }
+        if (args.where.refreshToken) {
+          for (const [id, s] of store.sessions) {
+            if (s.refreshToken === args.where.refreshToken) store.sessions.delete(id);
+          }
+        }
+        return { count: 1 };
+      }),
+    },
+    auditLog: {
+      create: mockAuditLogCreate,
     },
   };
 
@@ -127,6 +153,15 @@ describe('AuthService', () => {
       }),
     },
     session: {
+      findMany: jest.fn((args: { where: { refreshToken?: string } }) => {
+        const results: any[] = [];
+        for (const s of store.sessions.values()) {
+          if (args.where?.refreshToken && s.refreshToken === args.where.refreshToken) {
+            results.push(s);
+          }
+        }
+        return results;
+      }),
       findUnique: jest.fn((args: { where: { refreshToken: string } }) => {
         for (const s of store.sessions.values()) {
           if (s.refreshToken === args.where.refreshToken) return s;
@@ -596,6 +631,113 @@ describe('AuthService', () => {
       await expect(
         service.resetPassword({ token: 'bogus', password: 'NewStrongP4ss!' }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ─── Audit log compliance ───────────────────────────────────
+
+  describe('audit logs', () => {
+    beforeEach(async () => {
+      await service.register({ email: 'seed-audit@test.com', password: 'SeedP4ss!' });
+    });
+
+    it('register writes audit log inside $transaction', async () => {
+      mockAuditLogCreate.mockClear();
+      await service.register({ email: 'audit-reg@test.com', password: 'StrongP4ss!' });
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'register',
+          resource: 'user',
+        }),
+      });
+    });
+
+    it('verifyEmail writes audit log inside $transaction', async () => {
+      const { id } = await service.register({ email: 'audit-ve@test.com', password: 'StrongP4ss!' });
+      const token = store.users.get(id)!.emailVerifyToken;
+      mockAuditLogCreate.mockClear();
+      await service.verifyEmail(token);
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'verify-email',
+          resource: 'user',
+        }),
+      });
+    });
+
+    it('enable2fa writes audit log inside $transaction', async () => {
+      const { id } = await service.register({ email: 'audit-e2fa@test.com', password: 'StrongP4ss!' });
+      const user = store.users.get(id)!;
+      await service.verifyEmail(user.emailVerifyToken);
+      const { secret } = await service.generate2faSecret(id);
+      mockAuditLogCreate.mockClear();
+      await service.enable2fa(id, { token: secret });
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'enable-2fa',
+          resource: 'user',
+        }),
+      });
+    });
+
+    it('disable2fa writes audit log inside $transaction', async () => {
+      const { id } = await service.register({ email: 'audit-d2fa@test.com', password: 'StrongP4ss!' });
+      const user = store.users.get(id)!;
+      await service.verifyEmail(user.emailVerifyToken);
+      const { secret } = await service.generate2faSecret(id);
+      await service.enable2fa(id, { token: secret });
+      mockAuditLogCreate.mockClear();
+      await service.disable2fa(id, { token: secret });
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'disable-2fa',
+          resource: 'user',
+        }),
+      });
+    });
+
+    it('forgotPassword writes audit log inside $transaction', async () => {
+      mockAuditLogCreate.mockClear();
+      await service.forgotPassword({ email: 'seed-audit@test.com' });
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'forgot-password',
+          resource: 'user',
+        }),
+      });
+    });
+
+    it('resetPassword writes audit log inside $transaction', async () => {
+      const { id } = await service.register({ email: 'audit-rp@test.com', password: 'StrongP4ss!' });
+      const user = store.users.get(id)!;
+      await service.verifyEmail(user.emailVerifyToken);
+      await service.forgotPassword({ email: 'audit-rp@test.com' });
+      const sentCalls = mockMailService.send.mock.calls;
+      const sentCall = sentCalls[sentCalls.length - 1][0];
+      const rawToken = sentCall.text.split('?token=')[1];
+      mockAuditLogCreate.mockClear();
+      await service.resetPassword({ token: rawToken, password: 'NewP4ss!' });
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'reset-password',
+          resource: 'user',
+        }),
+      });
+    });
+
+    it('logout writes audit log inside $transaction', async () => {
+      const { id } = await service.register({ email: 'audit-lo@test.com', password: 'StrongP4ss!' });
+      const user = store.users.get(id)!;
+      await service.verifyEmail(user.emailVerifyToken);
+      const tokens = (await service.login({ email: 'audit-lo@test.com', password: 'StrongP4ss!' })) as any;
+      mockAuditLogCreate.mockClear();
+      await service.logout(tokens.refreshToken);
+      expect(mockAuditLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'logout',
+          resource: 'session',
+        }),
+      });
     });
   });
 

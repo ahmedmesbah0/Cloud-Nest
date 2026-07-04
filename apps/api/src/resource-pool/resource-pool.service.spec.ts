@@ -1,10 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ResourcePoolService } from './resource-pool.service';
+import { ResourcePoolRepository } from './resource-pool.repository';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('ResourcePoolService', () => {
   let service: ResourcePoolService;
+  let mockRepo: any;
   let mockPrisma: any;
 
   const store = {
@@ -26,82 +28,78 @@ describe('ResourcePoolService', () => {
     store.pools.clear();
     store.allocations.clear();
 
-    mockPrisma = {
-      resourcePool: {
-        findUnique: jest.fn(({ where, include }: any) => {
-          const pool = store.pools.get(where.id);
-          if (!pool) return null;
-          if (include?.allocations) {
-            return {
-              ...pool,
-              allocations: Array.from(store.allocations.values()).filter(
-                (a: any) => a.poolId === pool.id,
-              ),
-            };
-          }
-          return pool;
-        }),
-        findMany: jest.fn(({ where, include }: any) => {
-          let pools = Array.from(store.pools.values());
-          if (where?.userId) {
-            pools = pools.filter((p: any) => p.userId === where.userId);
-          }
-          if (include?.allocations) {
-            return pools.map((p: any) => ({
-              ...p,
-              allocations: Array.from(store.allocations.values()).filter(
-                (a: any) => a.poolId === p.id,
-              ),
-            }));
-          }
-          return pools;
-        }),
-        create: jest.fn(({ data }: any) => {
-          const pool = {
-            id: `pool-${store.pools.size + 1}`,
-            ...data,
-            createdAt: new Date(),
-            updatedAt: new Date(),
+    mockRepo = {
+      findById: jest.fn(async (id: string, includeAllocations = false, _tx?: any) => {
+        const pool = store.pools.get(id);
+        if (!pool) return null;
+        if (includeAllocations) {
+          return {
+            ...pool,
+            allocations: Array.from(store.allocations.values()).filter(
+              (a: any) => a.poolId === pool.id,
+            ),
           };
-          store.pools.set(pool.id, pool);
-          return pool;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const pool = store.pools.get(where.id);
-          if (!pool) throw new Error('Not found');
-          Object.assign(pool, data);
-          return pool;
-        }),
-        delete: jest.fn(({ where }: any) => {
-          store.pools.delete(where.id);
-        }),
-      },
-      resourceAllocation: {
-        findUnique: jest.fn(({ where }: any) => {
-          for (const alloc of store.allocations.values()) {
-            if ((alloc as any).vmId === where.vmId) return alloc;
-          }
-          return null;
-        }),
-        create: jest.fn(({ data }: any) => {
-          return mockAllocation(data.poolId, data);
-        }),
-      delete: jest.fn(({ where }: any) => {
+        }
+        return pool;
+      }),
+      findMany: jest.fn(async (userId: string) => {
+        return Array.from(store.pools.values())
+          .filter((p: any) => p.userId === userId)
+          .map((p: any) => ({
+            ...p,
+            allocations: Array.from(store.allocations.values()).filter(
+              (a: any) => a.poolId === p.id,
+            ),
+          }));
+      }),
+      create: jest.fn(async (data: any, _tx?: any) => {
+        const pool = {
+          id: `pool-${store.pools.size + 1}`,
+          ...data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        store.pools.set(pool.id, pool);
+        return pool;
+      }),
+      update: jest.fn(async (id: string, data: any, _tx?: any) => {
+        const pool = store.pools.get(id);
+        if (!pool) throw new Error('Not found');
+        Object.assign(pool, data);
+        return pool;
+      }),
+      delete: jest.fn(async (id: string, _tx?: any) => {
+        store.pools.delete(id);
+      }),
+      findAllocationByVmId: jest.fn(async (vmId: string) => {
+        for (const alloc of store.allocations.values()) {
+          if ((alloc as any).vmId === vmId) return alloc;
+        }
+        return null;
+      }),
+      createAllocation: jest.fn(async (data: any, _tx?: any) => {
+        return mockAllocation(data.poolId, data);
+      }),
+      deleteAllocation: jest.fn(async (vmId: string, _tx?: any) => {
         for (const [id, alloc] of store.allocations) {
-          if ((alloc as any).vmId === where.vmId) {
+          if ((alloc as any).vmId === vmId) {
             store.allocations.delete(id);
             break;
           }
         }
       }),
-      },
-      $transaction: jest.fn((fn: any) => fn(mockPrisma)),
+    };
+
+    mockPrisma = {
       $queryRawUnsafe: jest.fn(),
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ResourcePoolService,
+        { provide: ResourcePoolRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
@@ -219,7 +217,6 @@ describe('ResourcePoolService', () => {
         totalDiskGb: 100,
       });
 
-      // First allocation: 2 cores, 4096MB, 50GB
       mockPrisma.$queryRawUnsafe
         .mockResolvedValueOnce([
           { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
@@ -236,7 +233,6 @@ describe('ResourcePoolService', () => {
         diskGb: 50,
       });
 
-      // Add an allocation to the store manually (mimicking what $transaction did)
       mockAllocation(pool.id, {
         vmId: 'vm-1',
         poolId: pool.id,
@@ -246,7 +242,6 @@ describe('ResourcePoolService', () => {
         ips: 0,
       });
 
-      // Second allocation: 2 cores, 4096MB, 50GB — should work
       mockPrisma.$queryRawUnsafe
         .mockResolvedValueOnce([
           { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
@@ -264,7 +259,6 @@ describe('ResourcePoolService', () => {
       });
       expect(result.success).toBe(true);
 
-      // Third allocation: should fail — pool is full
       mockPrisma.$queryRawUnsafe
         .mockResolvedValueOnce([
           { id: pool.id, totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100, totalIps: 0 },
@@ -287,7 +281,6 @@ describe('ResourcePoolService', () => {
 
   describe('concurrent admission control — critical test', () => {
     it('allows exactly one of two concurrent requests when pool has room for only one', async () => {
-      // Pool with room for exactly 1 VM (2 cores, 4096MB, 50GB)
       const pool = await service.createPool({
         userId: 'user-concurrent',
         totalCores: 2,
@@ -295,28 +288,23 @@ describe('ResourcePoolService', () => {
         totalDiskGb: 50,
       });
 
-      // Track how many allocations were created
       let allocationCount = 0;
 
-      // Mock $transaction to simulate concurrent behavior:
-      // Both requests read the pool (FOR UPDATE), both see 0 used,
-      // but only the first one to write succeeds.
+      const origCreateAllocation = mockRepo.createAllocation;
+      mockRepo.createAllocation = jest.fn(async (data: any, _tx?: any) => {
+        allocationCount++;
+        if (allocationCount > 1) {
+          throw new Error('duplicate key — already allocated');
+        }
+        return origCreateAllocation(data, _tx);
+      });
+
       mockPrisma.$transaction = jest.fn(async (fn: any) => {
         return fn({
           ...mockPrisma,
           $queryRawUnsafe: jest.fn()
             .mockResolvedValueOnce([{ id: pool.id, totalCores: 2, totalMemoryMb: 4096, totalDiskGb: 50, totalIps: 0 }])
             .mockResolvedValueOnce([{ cores: 0, memoryMb: 0, diskGb: 0, ips: 0 }]),
-          resourceAllocation: {
-            create: jest.fn(({ data }: any) => {
-              allocationCount++;
-              if (allocationCount > 1) {
-                throw new Error('duplicate key — already allocated');
-              }
-              mockAllocation(data.poolId, data);
-              return { id: 'alloc-concurrent', ...data };
-            }),
-          },
         });
       });
 
@@ -343,9 +331,45 @@ describe('ResourcePoolService', () => {
       expect(succeeded).toBe(1);
       expect(rejected).toBe(1);
 
-      // Only one allocation should exist in the store
       const allocs = Array.from(store.allocations.values());
       expect(allocs.length).toBe(1);
+    });
+  });
+
+  describe('audit logs', () => {
+    it('createPool writes audit log inside $transaction', async () => {
+      await service.createPool({ userId: 'user-1', totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100 });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'resource-pool.create', resource: 'resourcePool' }),
+      });
+    });
+
+    it('updatePool writes audit log inside $transaction', async () => {
+      const pool = await service.createPool({ userId: 'user-1', totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100 });
+      mockPrisma.auditLog.create.mockClear();
+      await service.updatePool(pool.id, { totalCores: 8 });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'resource-pool.update', resource: 'resourcePool' }),
+      });
+    });
+
+    it('deletePool writes audit log inside $transaction', async () => {
+      const pool = await service.createPool({ userId: 'user-1', totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100 });
+      mockPrisma.auditLog.create.mockClear();
+      await service.deletePool(pool.id);
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'resource-pool.delete', resource: 'resourcePool' }),
+      });
+    });
+
+    it('releaseResources writes audit log inside $transaction', async () => {
+      const pool = await service.createPool({ userId: 'user-1', totalCores: 4, totalMemoryMb: 8192, totalDiskGb: 100 });
+      mockAllocation(pool.id, { vmId: 'vm-rel', cores: 2, memoryMb: 4096, diskGb: 50, ips: 0 });
+      mockPrisma.auditLog.create.mockClear();
+      await service.releaseResources('vm-rel');
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'resource-pool.release', resource: 'resourceAllocation' }),
+      });
     });
   });
 
@@ -406,8 +430,7 @@ describe('ResourcePoolService', () => {
         ips: 0,
       });
 
-      // Pool's allocations must be visible to findUnique
-      mockPrisma.resourcePool.findUnique.mockResolvedValue({
+      mockRepo.findById.mockResolvedValue({
         ...pool,
         allocations: Array.from(store.allocations.values()).filter(
           (a: any) => a.poolId === pool.id,

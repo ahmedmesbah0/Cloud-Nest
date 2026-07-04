@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { VmService } from './vm.service';
+import { VmRepository } from './vm.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
@@ -8,6 +9,7 @@ import { ProxmoxService } from '../proxmox/proxmox.service';
 
 describe('VmService', () => {
   let service: VmService;
+  let mockRepo: any;
   let mockPrisma: any;
   let mockJobService: any;
   let mockPoolService: any;
@@ -79,30 +81,6 @@ describe('VmService', () => {
     };
 
     const mockTx = {
-      vm: {
-        create: jest.fn(({ data }: any) => {
-          const vm = { id: `vm-${store.vms.size + 1}`, status: 'provisioning', proxmoxId: null, nodeId: null, createdAt: new Date(), updatedAt: new Date(), ...data };
-          store.vms.set(vm.id, vm);
-          return vm;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const vm = store.vms.get(where.id);
-          if (!vm) throw new Error('Not found');
-          Object.assign(vm, data);
-          return vm;
-        }),
-      },
-      resourceAllocation: {
-        update: jest.fn(({ where, data }: any) => {
-          for (const [, alloc] of store.allocations) {
-            if ((alloc as any).vmId === where.vmId) {
-              Object.assign(alloc, data);
-              return alloc;
-            }
-          }
-          throw new Error('Allocation not found');
-        }),
-      },
       $queryRawUnsafe: jest.fn((sql: string, ...params: any[]) => {
         if (sql.includes('FOR UPDATE')) {
           let poolId = 'pool-1';
@@ -126,112 +104,125 @@ describe('VmService', () => {
         }
         return [];
       }),
-      ipAddress: {
-        findFirst: jest.fn(() => null),
-        update: jest.fn(({ where, data }: any) => ({ id: where.id, ...data })),
-      },
       auditLog: {
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
           store.auditLogs.set(log.id, log);
           return log;
-        }),
-      },
-      backup: {
-        update: jest.fn(({ where, data }: any) => {
-          for (const b of store.backups?.values() ?? []) {
-            if ((b as any).id === where.id) { Object.assign(b, data); return b; }
-          }
-          return null;
         }),
       },
     };
 
+    mockRepo = {
+      // VM
+      findVmById: jest.fn(async (id: string) => store.vms.get(id) ?? null),
+      findVmsByUser: jest.fn(async (userId: string) => {
+        return Array.from(store.vms.values()).filter((v: any) => v.userId === userId);
+      }),
+      createVm: jest.fn(async (data: any) => {
+        const vm = { id: `vm-${store.vms.size + 1}`, status: 'provisioning', proxmoxId: null, nodeId: null, createdAt: new Date(), updatedAt: new Date(), ...data };
+        store.vms.set(vm.id, vm);
+        return vm;
+      }),
+      updateVm: jest.fn(async (id: string, data: any) => {
+        const vm = store.vms.get(id);
+        if (!vm) throw new Error('Not found');
+        Object.assign(vm, data);
+        return vm;
+      }),
+      // Templates
+      findActiveTemplates: jest.fn(async () => {
+        return Array.from(store.templates.values()).filter((t: any) => t.isActive);
+      }),
+      findTemplateById: jest.fn(async (id: string) => store.templates.get(id) ?? null),
+      // Pools
+      findPoolById: jest.fn(async (id: string) => store.pools.get(id) ?? null),
+      // Nodes
+      findFirstActiveNode: jest.fn(async () => {
+        if (!store.nodes || store.nodes.size === 0) return null;
+        const first = store.nodes.values().next().value;
+        return first ?? null;
+      }),
+      findNodeById: jest.fn(async (id: string) => store.nodes.get(id) ?? null),
+      // IPs
+      findAvailableIp: jest.fn(async () => null),
+      assignIpToVm: jest.fn(async (ipId: string, vmId: string) => ({ id: ipId, isAssigned: true, vmId })),
+      // Raw queries for resize — access store directly like original mockTx did
+      lockUserPools: jest.fn(async (_userId: string, _tx?: any) => {
+        let poolId = 'pool-1';
+        for (const p of store.pools.values()) {
+          poolId = p.id;
+          break;
+        }
+        const pool = store.pools.get(poolId)!;
+        return [{ id: pool.id, totalCores: pool.totalCores, totalMemoryMb: pool.totalMemoryMb, totalDiskGb: pool.totalDiskGb, totalIps: pool.totalIps }];
+      }),
+      sumAllocationsExcludingVm: jest.fn(async (_poolId: string, _vmId: string, _tx?: any) => {
+        return [{ cores: store.otherUsage.cores, memoryMb: store.otherUsage.memoryMb, diskGb: store.otherUsage.diskGb, ips: store.otherUsage.ips }];
+      }),
+      findAllocationByVm: jest.fn(async (vmId: string, _tx?: any) => {
+        for (const alloc of store.allocations.values()) {
+          if ((alloc as any).vmId === vmId) {
+            return [{ cores: alloc.cores, memoryMb: alloc.memoryMb, diskGb: alloc.diskGb }];
+          }
+        }
+        return [];
+      }),
+      // Backups
+      findBackupsByVm: jest.fn(async (vmId: string) => {
+        return Array.from(store.backups.values()).filter((b: any) => b.vmId === vmId);
+      }),
+      findCompletedBackupsByVm: jest.fn(async (vmId: string) => {
+        return Array.from(store.backups.values()).filter((b: any) => b.vmId === vmId && b.status === 'completed');
+      }),
+      findBackupById: jest.fn(async (id: string) => {
+        for (const b of store.backups?.values() ?? []) {
+          if ((b as any).id === id) return b;
+        }
+        return null;
+      }),
+      createBackup: jest.fn(async (data: any) => {
+        const b = { id: `bkp-${Date.now()}`, ...data, createdAt: new Date(), updatedAt: new Date() };
+        if (!store.backups) store.backups = new Map();
+        store.backups.set(b.id, b);
+        return b;
+      }),
+      updateBackup: jest.fn(async (id: string, data: any) => {
+        for (const b of store.backups?.values() ?? []) {
+          if ((b as any).id === id) { Object.assign(b, data); return b; }
+        }
+        return null;
+      }),
+      // Snapshots
+      findSnapshotsByVm: jest.fn(async (vmId: string) => {
+        return Array.from(store.snapshots.values()).filter((s: any) => s.vmId === vmId);
+      }),
+      findSnapshotById: jest.fn(async (id: string) => {
+        for (const s of store.snapshots?.values() ?? []) {
+          if ((s as any).id === id) return s;
+        }
+        return null;
+      }),
+      createSnapshot: jest.fn(async (data: any) => {
+        const s = { id: `snap-${Date.now()}`, ...data, createdAt: new Date(), updatedAt: new Date() };
+        if (!store.snapshots) store.snapshots = new Map();
+        store.snapshots.set(s.id, s);
+        return s;
+      }),
+      updateSnapshot: jest.fn(async (id: string, data: any) => {
+        for (const s of store.snapshots?.values() ?? []) {
+          if ((s as any).id === id) { Object.assign(s, data); return s; }
+        }
+        return null;
+      }),
+    };
+
     mockPrisma = {
-      vm: {
-        findUnique: jest.fn(({ where }: any) => {
-          return store.vms.get(where.id) ?? null;
-        }),
-        findMany: jest.fn(({ where, orderBy }: any) => {
-          let vms = Array.from(store.vms.values());
-          if (where?.userId) vms = vms.filter((v: any) => v.userId === where.userId);
-          if (orderBy?.createdAt === 'desc') vms.reverse();
-          return vms;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const vm = store.vms.get(where.id);
-          if (!vm) throw new Error('Not found');
-          Object.assign(vm, data);
-          return vm;
-        }),
-      },
-      resourcePool: {
-        findUnique: jest.fn(({ where }: any) => {
-          return store.pools.get(where.id) ?? null;
-        }),
-      },
-      vmTemplate: {
-        findUnique: jest.fn(({ where }: any) => {
-          return store.templates.get(where.id) ?? null;
-        }),
-      },
-      node: {
-        findFirst: jest.fn(() => {
-          if (!store.nodes || store.nodes.size === 0) return null;
-          const first = store.nodes.values().next().value;
-          return first ?? null;
-        }),
-        findUnique: jest.fn(({ where }: any) => {
-          return store.nodes.get(where.id) ?? null;
-        }),
-      },
       auditLog: {
         create: jest.fn(({ data }: any) => {
           const log = { id: `log-${store.auditLogs.size + 1}`, ...data };
           store.auditLogs.set(log.id, log);
           return log;
-        }),
-      },
-      backup: {
-        findMany: jest.fn(() => []),
-        findUnique: jest.fn(({ where }: any) => {
-          for (const b of store.backups?.values() ?? []) {
-            if ((b as any).id === where.id) return b;
-          }
-          return null;
-        }),
-        create: jest.fn(({ data }: any) => {
-          const b = { id: `bkp-${Date.now()}`, ...data, createdAt: new Date(), updatedAt: new Date() };
-          if (!store.backups) store.backups = new Map();
-          store.backups.set(b.id, b);
-          return b;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          for (const b of store.backups?.values() ?? []) {
-            if ((b as any).id === where.id) { Object.assign(b, data); return b; }
-          }
-          return null;
-        }),
-      },
-      snapshot: {
-        findMany: jest.fn(() => []),
-        findUnique: jest.fn(({ where }: any) => {
-          for (const s of store.snapshots?.values() ?? []) {
-            if ((s as any).id === where.id) return s;
-          }
-          return null;
-        }),
-        create: jest.fn(({ data }: any) => {
-          const s = { id: `snap-${Date.now()}`, ...data, createdAt: new Date(), updatedAt: new Date() };
-          if (!store.snapshots) store.snapshots = new Map();
-          store.snapshots.set(s.id, s);
-          return s;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          for (const s of store.snapshots?.values() ?? []) {
-            if ((s as any).id === where.id) { Object.assign(s, data); return s; }
-          }
-          return null;
         }),
       },
       $transaction: jest.fn((fn: any) => fn(mockTx)),
@@ -240,6 +231,7 @@ describe('VmService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         VmService,
+        { provide: VmRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ProxmoxJobService, useValue: mockJobService },
         { provide: ResourcePoolService, useValue: mockPoolService },
@@ -710,15 +702,15 @@ describe('VmService', () => {
       addNode();
       store.vms.set('vm-1', { id: 'vm-1', userId: 'user-1', name: 'vm1', status: 'running', proxmoxId: 100, nodeId: 'node-1', cpuCores: 1, memoryMb: 1024, diskGb: 10, createdAt: new Date(), updatedAt: new Date() });
 
-      // Override backup.findMany to simulate 5 completed backups for retention eviction
+      // Override findCompletedBackupsByVm to simulate 5 completed backups for retention eviction
       const completedBackups = Array.from({ length: 5 }, (_, i) => ({
         id: `old-bkp-${i}`,
         vmId: 'vm-1',
         status: 'completed',
         createdAt: new Date(Date.now() - (5 - i) * 86400000),
       }));
-      const origFindMany = mockPrisma.backup.findMany;
-      mockPrisma.backup.findMany = jest.fn().mockResolvedValue(completedBackups);
+      const origFindCompleted = mockRepo.findCompletedBackupsByVm;
+      mockRepo.findCompletedBackupsByVm = jest.fn().mockResolvedValue(completedBackups);
 
       try {
         const result = await service.createBackup('user-1', 'vm-1', {});
@@ -731,7 +723,7 @@ describe('VmService', () => {
         // FIXED: audit log written inside $transaction
         expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
       } finally {
-        mockPrisma.backup.findMany = origFindMany;
+        mockRepo.findCompletedBackupsByVm = origFindCompleted;
       }
     });
   });

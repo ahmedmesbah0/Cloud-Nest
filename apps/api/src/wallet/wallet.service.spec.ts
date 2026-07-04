@@ -1,10 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { WalletService } from './wallet.service';
+import { WalletRepository } from './wallet.repository';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('WalletService', () => {
   let service: WalletService;
+  let mockRepo: any;
   let mockPrisma: any;
 
   const store = {
@@ -16,48 +18,53 @@ describe('WalletService', () => {
     store.wallets.clear();
     store.transactions.clear();
 
+    mockRepo = {
+      findByUser: jest.fn(async (userId: string, includeTransactions = false, _tx?: any) => {
+        const w = store.wallets.get(userId);
+        if (!w) return null;
+        if (includeTransactions) {
+          return {
+            ...w,
+            transactions: Array.from(store.transactions.values())
+              .filter((t: any) => t.walletId === w.id)
+              .sort((a: any, b: any) => b.createdAt - a.createdAt)
+              .slice(0, 50),
+          };
+        }
+        return w;
+      }),
+      create: jest.fn(async (data: any, _tx?: any) => {
+        const w = {
+          id: `wallet-${data.userId}`,
+          balance: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...data,
+        };
+        store.wallets.set(data.userId, w);
+        return w;
+      }),
+      update: jest.fn(async (userId: string, data: any, _tx?: any) => {
+        const w = store.wallets.get(userId);
+        if (!w) throw new Error('Not found');
+        if (data.balance?.increment) w.balance += data.balance.increment;
+        if (data.balance?.decrement) w.balance -= data.balance.decrement;
+        return w;
+      }),
+      findTransactions: jest.fn(async (walletId: string, limit: number) => {
+        return Array.from(store.transactions.values())
+          .filter((t: any) => t.walletId === walletId)
+          .sort((a: any, b: any) => b.createdAt - a.createdAt)
+          .slice(0, limit);
+      }),
+      createTransaction: jest.fn(async (data: any, _tx?: any) => {
+        const t = { id: `tx-${store.transactions.size + 1}`, createdAt: new Date(), ...data };
+        store.transactions.set(t.id, t);
+        return t;
+      }),
+    };
+
     mockPrisma = {
-      wallet: {
-        findUnique: jest.fn(({ where, include }: any) => {
-          const w = store.wallets.get(where.userId);
-          if (!w) return null;
-          if (include?.transactions) {
-            return {
-              ...w,
-              transactions: Array.from(store.transactions.values())
-                .filter((t: any) => t.walletId === w.id)
-                .sort((a: any, b: any) => b.createdAt - a.createdAt)
-                .slice(0, 50),
-            };
-          }
-          return w;
-        }),
-        create: jest.fn(({ data }: any) => {
-          const w = { id: `wallet-${data.userId}`, balance: 0, createdAt: new Date(), updatedAt: new Date(), ...data };
-          store.wallets.set(data.userId, w);
-          return w;
-        }),
-        update: jest.fn(({ where, data }: any) => {
-          const w = store.wallets.get(where.userId);
-          if (!w) throw new Error('Not found');
-          if (data.balance?.increment) w.balance += data.balance.increment;
-          if (data.balance?.decrement) w.balance -= data.balance.decrement;
-          return w;
-        }),
-      },
-      transaction: {
-        findMany: jest.fn(({ where, take }: any) => {
-          return Array.from(store.transactions.values())
-            .filter((t: any) => t.walletId === where.walletId)
-            .sort((a: any, b: any) => b.createdAt - a.createdAt)
-            .slice(0, take);
-        }),
-        create: jest.fn(({ data }: any) => {
-          const t = { id: `tx-${store.transactions.size + 1}`, createdAt: new Date(), ...data };
-          store.transactions.set(t.id, t);
-          return t;
-        }),
-      },
       auditLog: {
         create: jest.fn(({ data }: any) => ({ id: `log-${Date.now()}`, ...data })),
       },
@@ -67,6 +74,7 @@ describe('WalletService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WalletService,
+        { provide: WalletRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();

@@ -1,45 +1,34 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsRepository } from './notifications.repository';
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly notificationsRepo: NotificationsRepository,
+  ) {}
 
   async list(userId: string, page = 1, limit = 50) {
     const skip = (page - 1) * limit;
     const [notifications, total, unreadCount] = await Promise.all([
-      this.prisma.notification.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.notification.count({ where: { userId } }),
-      this.prisma.notification.count({ where: { userId, isRead: false } }),
+      this.notificationsRepo.findMany(userId, skip, limit),
+      this.notificationsRepo.count(userId),
+      this.notificationsRepo.count(userId, false),
     ]);
     return { notifications, total, unreadCount, page, limit };
   }
 
   async markRead(userId: string, notificationId: string) {
-    const n = await this.prisma.notification.findUnique({ where: { id: notificationId } });
+    const n = await this.notificationsRepo.findById(notificationId);
     if (!n || n.userId !== userId) throw new NotFoundException('Notification not found');
-    return this.prisma.notification.update({
-      where: { id: notificationId },
-      data: { isRead: true },
-    });
+    return this.notificationsRepo.update(notificationId, { isRead: true });
   }
 
   async markAllRead(userId: string) {
-    await this.prisma.notification.updateMany({
-      where: { userId, isRead: false },
-      data: { isRead: true },
-    });
+    await this.notificationsRepo.updateMany({ userId, isRead: false }, { isRead: true });
     return { success: true };
   }
 
   async create(userId: string, title: string, body: string) {
-    return this.prisma.notification.create({
-      data: { userId, title, body },
-    });
+    return this.notificationsRepo.create({ userId, title, body });
   }
 }

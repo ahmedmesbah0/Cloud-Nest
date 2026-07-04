@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { VmRepository } from './vm.repository';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
@@ -8,16 +9,14 @@ import { ProxmoxService } from '../proxmox/proxmox.service';
 export class VmService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly vmRepo: VmRepository,
     private readonly jobService: ProxmoxJobService,
     private readonly poolService: ResourcePoolService,
     private readonly proxmox: ProxmoxService,
   ) {}
 
   async listTemplates() {
-    return this.prisma.vmTemplate.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
-    });
+    return this.vmRepo.findActiveTemplates();
   }
 
   async createVm(userId: string, dto: {
@@ -29,39 +28,30 @@ export class VmService {
     diskGb: number;
     sshKeyId?: string;
   }) {
-    const pool = await this.prisma.resourcePool.findUnique({
-      where: { id: dto.poolId },
-    });
+    const pool = await this.vmRepo.findPoolById(dto.poolId);
     if (!pool) throw new BadRequestException('Resource pool not found');
     if (pool.userId !== userId) throw new ForbiddenException('Not your pool');
 
-    const template = await this.prisma.vmTemplate.findUnique({
-      where: { id: dto.templateId },
-    });
+    const template = await this.vmRepo.findTemplateById(dto.templateId);
     if (!template) throw new BadRequestException('Template not found');
 
-    const defaultNode = await this.prisma.node.findFirst({
-      where: { isActive: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    const defaultNode = await this.vmRepo.findFirstActiveNode();
     if (!defaultNode) throw new BadRequestException('No active node available');
 
     const vmid = await this.proxmox.getNextVmid();
 
     const vm = await this.prisma.$transaction(async (tx: any) => {
-      const vm = await tx.vm.create({
-        data: {
-          userId,
-          name: dto.name,
-          status: 'provisioning',
-          proxmoxId: vmid,
-          nodeId: defaultNode.id,
-          cpuCores: dto.cpuCores,
-          memoryMb: dto.memoryMb,
-          diskGb: dto.diskGb,
-          templateId: dto.templateId,
-        },
-      });
+      const vm = await this.vmRepo.createVm({
+        userId,
+        name: dto.name,
+        status: 'provisioning',
+        proxmoxId: vmid,
+        nodeId: defaultNode.id,
+        cpuCores: dto.cpuCores,
+        memoryMb: dto.memoryMb,
+        diskGb: dto.diskGb,
+        templateId: dto.templateId,
+      }, tx);
 
       await this.poolService.allocateResources({
         poolId: dto.poolId,
@@ -72,15 +62,9 @@ export class VmService {
       }, tx);
 
       // Auto-assign an IP from the default pool
-      const availableIp = await tx.ipAddress.findFirst({
-        where: { isAssigned: false, vmId: null },
-        orderBy: { address: 'asc' },
-      });
+      const availableIp = await this.vmRepo.findAvailableIp(tx);
       if (availableIp) {
-        await tx.ipAddress.update({
-          where: { id: availableIp.id },
-          data: { isAssigned: true, vmId: vm.id },
-        });
+        await this.vmRepo.assignIpToVm(availableIp.id, vm.id, tx);
       }
 
       await tx.auditLog.create({
@@ -114,14 +98,11 @@ export class VmService {
   }
 
   async listVms(userId: string) {
-    return this.prisma.vm.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.vmRepo.findVmsByUser(userId);
   }
 
   async getVm(vmId: string, userId: string) {
-    const vm = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vm = await this.vmRepo.findVmById(vmId);
     if (!vm) throw new NotFoundException('VM not found');
     if (vm.userId !== userId) throw new ForbiddenException('Not your VM');
     return vm;
@@ -179,22 +160,13 @@ export class VmService {
 
     // Check pool limits inside a transaction (read-only, don't update DB yet)
     await this.prisma.$transaction(async (tx: any) => {
-      const pools: Array<{ id: string; totalCores: number; totalMemoryMb: number; totalDiskGb: number }> = await tx.$queryRawUnsafe(
-        `SELECT id, "totalCores", "totalMemoryMb", "totalDiskGb" FROM "ResourcePool" WHERE "userId" = $1 FOR UPDATE`,
-        userId,
-      );
+      const pools = await this.vmRepo.lockUserPools(userId, tx);
       const pool = pools[0];
       if (!pool) throw new BadRequestException('No resource pool found');
 
-      const allocations: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
-        `SELECT COALESCE(SUM(cores), 0) as cores, COALESCE(SUM("memoryMb"), 0) as "memoryMb", COALESCE(SUM("diskGb"), 0) as "diskGb" FROM "ResourceAllocation" WHERE "poolId" = $1 AND "vmId" != $2`,
-        pool.id, vmId,
-      );
+      const allocations = await this.vmRepo.sumAllocationsExcludingVm(pool.id, vmId, tx);
 
-      const currentAllocs: Array<{ cores: number; memoryMb: number; diskGb: number }> = await tx.$queryRawUnsafe(
-        `SELECT cores, "memoryMb", "diskGb" FROM "ResourceAllocation" WHERE "vmId" = $1`,
-        vmId,
-      );
+      const currentAllocs = await this.vmRepo.findAllocationByVm(vmId, tx);
       const currentAlloc = currentAllocs[0];
       if (!currentAlloc) throw new BadRequestException('No resource allocation found for VM');
 
@@ -235,14 +207,11 @@ export class VmService {
 
   async reinstallVm(userId: string, vmId: string, templateId: string) {
     const vm = await this.getVm(vmId, userId);
-    const template = await this.prisma.vmTemplate.findUnique({ where: { id: templateId } });
+    const template = await this.vmRepo.findTemplateById(templateId);
     if (!template) throw new BadRequestException('Template not found');
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.vm.update({
-        where: { id: vmId },
-        data: { status: 'provisioning' },
-      });
+      await this.vmRepo.updateVm(vmId, { status: 'provisioning' }, tx);
       await tx.auditLog.create({
         data: { userId, action: 'vm.reinstall.status', resource: 'vm', resourceId: vmId },
       });
@@ -301,7 +270,7 @@ export class VmService {
   async getIsoStorages(userId: string, vmId: string) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.nodeId) throw new BadRequestException('VM has no node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     const storages = await this.proxmox.getStoragePools(node.proxmoxNodeId);
     return (storages as any[]).filter((s: any) =>
@@ -312,7 +281,7 @@ export class VmService {
   async getIsoList(userId: string, vmId: string, storage: string) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.nodeId) throw new BadRequestException('VM has no node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     const content = await this.proxmox.getStorageContent(storage, node.proxmoxNodeId);
     return (content as any[]).filter((c: any) =>
@@ -329,7 +298,7 @@ export class VmService {
   async downloadUrlIso(userId: string, vmId: string, url: string, storage: string) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.nodeId) throw new BadRequestException('VM has no node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     if (!url) throw new BadRequestException('URL is required');
     if (!storage) throw new BadRequestException('Storage is required');
@@ -349,10 +318,7 @@ export class VmService {
 
   async listBackups(userId: string, vmId: string) {
     const vm = await this.getVm(vmId, userId);
-    return this.prisma.backup.findMany({
-      where: { vmId: vm.id },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.vmRepo.findBackupsByVm(vm.id);
   }
 
   async createBackup(
@@ -363,29 +329,21 @@ export class VmService {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
 
-    const backup = await this.prisma.backup.create({
-      data: {
-        vmId: vm.id,
-        name: `backup-${vm.name || vm.id}-${Date.now()}`,
-        status: 'pending',
-        storage: dto.storage ?? 'local-lvm',
-        nodeId: vm.nodeId,
-      },
+    const backup = await this.vmRepo.createBackup({
+      vmId: vm.id,
+      name: `backup-${vm.name || vm.id}-${Date.now()}`,
+      status: 'pending',
+      storage: dto.storage ?? 'local-lvm',
+      nodeId: vm.nodeId,
     });
 
     // Retention/FIFO: if more than 5 backups exist, delete the oldest completed one
-    const existing = await this.prisma.backup.findMany({
-      where: { vmId: vm.id, status: 'completed' },
-      orderBy: { createdAt: 'asc' },
-    });
+    const existing = await this.vmRepo.findCompletedBackupsByVm(vm.id);
     const MAX_BACKUPS = 5;
     if (existing.length >= MAX_BACKUPS) {
       const toDelete = existing[0];
       await this.prisma.$transaction(async (tx: any) => {
-        await tx.backup.update({
-          where: { id: toDelete.id },
-          data: { status: 'failed' },
-        });
+        await this.vmRepo.updateBackup(toDelete.id, { status: 'failed' }, tx);
         await tx.auditLog.create({
           data: { userId, action: 'vm.backup.retention-evict', resource: 'backup', resourceId: toDelete.id, metadata: { vmId, reason: 'FIFO eviction' } },
         });
@@ -410,14 +368,11 @@ export class VmService {
 
   async deleteBackup(userId: string, vmId: string, backupId: string) {
     const vm = await this.getVm(vmId, userId);
-    const backup = await this.prisma.backup.findUnique({ where: { id: backupId } });
+    const backup = await this.vmRepo.findBackupById(backupId);
     if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
 
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.backup.update({
-        where: { id: backupId },
-        data: { status: 'failed' },
-      });
+      await this.vmRepo.updateBackup(backupId, { status: 'failed' }, tx);
       await tx.auditLog.create({
         data: {
           userId,
@@ -434,14 +389,14 @@ export class VmService {
 
   async restoreBackup(userId: string, vmId: string, backupId: string) {
     const vm = await this.getVm(vmId, userId);
-    const backup = await this.prisma.backup.findUnique({ where: { id: backupId } });
+    const backup = await this.vmRepo.findBackupById(backupId);
     if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
     if (backup.status !== 'completed') throw new BadRequestException('Backup must be completed to restore');
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
 
     let archive = backup.volid;
     if (!archive) {
-      const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+      const node = await this.vmRepo.findNodeById(vm.nodeId);
       if (!node) throw new NotFoundException('Node not found');
       const content = await this.proxmox.getStorageContent(backup.storage, node.proxmoxNodeId);
       const backupFiles = (content as any[]).filter(
@@ -466,24 +421,19 @@ export class VmService {
 
   async listSnapshots(userId: string, vmId: string) {
     const vm = await this.getVm(vmId, userId);
-    return this.prisma.snapshot.findMany({
-      where: { vmId: vm.id },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.vmRepo.findSnapshotsByVm(vm.id);
   }
 
   async createSnapshot(userId: string, vmId: string, name: string, description?: string) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
 
-    const snapshot = await this.prisma.snapshot.create({
-      data: {
-        vmId: vm.id,
-        name,
-        description,
-        status: 'pending',
-        nodeId: vm.nodeId,
-      },
+    const snapshot = await this.vmRepo.createSnapshot({
+      vmId: vm.id,
+      name,
+      description: description ?? null,
+      status: 'pending',
+      nodeId: vm.nodeId,
     });
 
     await this.jobService.enqueueJob('create-snapshot', {
@@ -502,14 +452,14 @@ export class VmService {
 
   async deleteSnapshot(userId: string, vmId: string, snapshotId: string) {
     const vm = await this.getVm(vmId, userId);
-    const snapshot = await this.prisma.snapshot.findUnique({ where: { id: snapshotId } });
+    const snapshot = await this.vmRepo.findSnapshotById(snapshotId);
     if (!snapshot || snapshot.vmId !== vm.id) throw new NotFoundException('Snapshot not found');
 
     if (snapshot.status !== 'created') {
       throw new BadRequestException('Snapshot must be in "created" state to delete');
     }
 
-    const vmWithProxmox = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vmWithProxmox = await this.vmRepo.findVmById(vmId);
     if (!vmWithProxmox?.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
 
     await this.jobService.enqueueJob('delete-snapshot', {
@@ -528,14 +478,14 @@ export class VmService {
 
   async rollbackSnapshot(userId: string, vmId: string, snapshotId: string) {
     const vm = await this.getVm(vmId, userId);
-    const snapshot = await this.prisma.snapshot.findUnique({ where: { id: snapshotId } });
+    const snapshot = await this.vmRepo.findSnapshotById(snapshotId);
     if (!snapshot || snapshot.vmId !== vm.id) throw new NotFoundException('Snapshot not found');
 
     if (snapshot.status !== 'created') {
       throw new BadRequestException('Snapshot must be in "created" state to rollback');
     }
 
-    const vmWithProxmox = await this.prisma.vm.findUnique({ where: { id: vmId } });
+    const vmWithProxmox = await this.vmRepo.findVmById(vmId);
     if (!vmWithProxmox?.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
 
     await this.jobService.enqueueJob('rollback-snapshot', {
@@ -570,7 +520,7 @@ export class VmService {
   async addFirewallRule(userId: string, vmId: string, rule: Record<string, unknown>) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
 
     await this.jobService.enqueueJob('add-firewall-rule', {
@@ -589,7 +539,7 @@ export class VmService {
   async deleteFirewallRule(userId: string, vmId: string, pos: number) {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
 
     await this.jobService.enqueueJob('delete-firewall-rule', {
@@ -609,7 +559,7 @@ export class VmService {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
 
-    const targetNode = await this.prisma.node.findUnique({ where: { id: targetNodeId } });
+    const targetNode = await this.vmRepo.findNodeById(targetNodeId);
     if (!targetNode) throw new NotFoundException('Target node not found');
 
     await this.jobService.enqueueJob('migrate-vm', {
@@ -629,7 +579,7 @@ export class VmService {
   async getHardwareConfig(userId: string, vmId: string): Promise<Record<string, unknown>> {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     const config = await this.proxmox.getVmConfig(node.proxmoxNodeId, vm.proxmoxId);
     const hardwareKeys = ['bios', 'boot', 'machine', 'cpu', 'sockets', 'numa', 'ostype', 'agent', 'vga', 'tablet', 'hotplug', 'acpi', 'kvm', 'efidisk0', 'tpmstate0', 'args', 'cores', 'memory'];
@@ -645,7 +595,7 @@ export class VmService {
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
     if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change hardware config');
 
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
 
     const allowedKeys = ['bios', 'boot', 'machine', 'cpu', 'sockets', 'numa', 'ostype', 'agent', 'vga', 'tablet', 'hotplug', 'acpi', 'kvm', 'efidisk0', 'tpmstate0', 'args'];
@@ -676,7 +626,7 @@ export class VmService {
   async getNetworkInterfaces(userId: string, vmId: string): Promise<Record<string, string>> {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     const config = await this.proxmox.getVmConfig(node.proxmoxNodeId, vm.proxmoxId);
     const result: Record<string, string> = {};
@@ -693,7 +643,7 @@ export class VmService {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
     if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change network config');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     await this.jobService.enqueueJob('update-vm-config', {
       vmId,
@@ -712,7 +662,7 @@ export class VmService {
     const vm = await this.getVm(vmId, userId);
     if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
     if (vm.status !== 'stopped') throw new BadRequestException('VM must be stopped to change network config');
-    const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+    const node = await this.vmRepo.findNodeById(vm.nodeId);
     if (!node) throw new NotFoundException('Node not found');
     await this.jobService.enqueueJob('update-vm-config', {
       vmId,
@@ -740,14 +690,11 @@ export class VmService {
   async setDnsConfig(userId: string, vmId: string, dto: { nameserver1?: string; nameserver2?: string; searchdomain?: string }) {
     const vm = await this.getVm(vmId, userId);
     const updated = await this.prisma.$transaction(async (tx: any) => {
-      const u = await tx.vm.update({
-        where: { id: vmId },
-        data: {
-          nameserver1: dto.nameserver1 ?? vm.nameserver1,
-          nameserver2: dto.nameserver2 ?? vm.nameserver2,
-          searchdomain: dto.searchdomain ?? vm.searchdomain,
-        },
-      });
+      const u = await this.vmRepo.updateVm(vmId, {
+        nameserver1: dto.nameserver1 ?? vm.nameserver1,
+        nameserver2: dto.nameserver2 ?? vm.nameserver2,
+        searchdomain: dto.searchdomain ?? vm.searchdomain,
+      }, tx);
       await tx.auditLog.create({
         data: { userId, action: 'vm.dns.update', resource: 'vm', resourceId: vmId, metadata: dto as any },
       });
@@ -758,6 +705,46 @@ export class VmService {
       nameserver2: updated.nameserver2,
       searchdomain: updated.searchdomain,
     };
+  }
+
+  // --- Internal methods (no ownership checks, for consumer use) ---
+
+  async logAuditAction(data: {
+    userId: string; action: string; resource: string; resourceId?: string; metadata?: any;
+  }) {
+    await this.prisma.auditLog.create({
+      data: {
+        userId: data.userId,
+        action: data.action,
+        resource: data.resource,
+        resourceId: data.resourceId,
+        metadata: data.metadata,
+      },
+    });
+  }
+
+  async updateVmStatus(vmId: string, status: string, additionalData?: Record<string, unknown>) {
+    return this.vmRepo.updateVm(vmId, { status, ...additionalData });
+  }
+
+  async getVmWithIps(vmId: string) {
+    return this.vmRepo.findVmWithIps(vmId);
+  }
+
+  async completeBackup(backupId: string, data: Record<string, unknown>) {
+    return this.vmRepo.updateBackup(backupId, data);
+  }
+
+  async completeSnapshot(snapshotId: string, data: Record<string, unknown>) {
+    return this.vmRepo.updateSnapshot(snapshotId, data);
+  }
+
+  async removeSnapshotRecord(snapshotId: string) {
+    return this.vmRepo.deleteSnapshot(snapshotId);
+  }
+
+  async findBackupWithVm(backupId: string) {
+    return this.vmRepo.findBackupWithVm(backupId);
   }
 
   async getVncUrl(userId: string, vmId: string): Promise<{ host: string; port: string; ticket: string; cert: string }> {

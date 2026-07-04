@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AdminService } from './admin.service';
+import { AdminRepository } from './admin.repository';
 import { AdminController } from './admin.controller';
 import { AdminGuard } from './admin.guard';
 import { ProxmoxModule } from '../proxmox/proxmox.module';
@@ -21,7 +22,7 @@ import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
     }),
   ],
   controllers: [AdminController],
-  providers: [AdminService, AdminGuard],
+  providers: [AdminService, AdminRepository, AdminGuard],
   exports: [AdminService],
 })
 export class AdminModule {}
