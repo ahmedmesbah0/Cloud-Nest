@@ -18,6 +18,7 @@ const JOB_STATUS_MAP: Partial<Record<ProxmoxJobType, VmStatus>> = {
   'suspend-vm': 'suspended',
   'resume-vm': 'running',
   'delete-vm': 'deleted',
+  'reinstall-vm': 'stopped',
 };
 
 @Processor('proxmox-jobs', {

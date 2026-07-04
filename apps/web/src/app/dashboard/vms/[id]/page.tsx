@@ -85,6 +85,9 @@ export default function VmDetailPage() {
   const [loadingDns, setLoadingDns] = useState(false);
   const [savingDns, setSavingDns] = useState(false);
 
+  const [reinstalling, setReinstalling] = useState(false);
+  const [reinstallProgress, setReinstallProgress] = useState('');
+
   const [createBacking, setCreateBacking] = useState(false);
   const [creatingSnapshot, setCreatingSnapshot] = useState(false);
   const [backupMode, setBackupMode] = useState<'snapshot' | 'suspend' | 'stop'>('snapshot');
@@ -181,16 +184,37 @@ export default function VmDetailPage() {
       return;
     }
     if (!confirm('Reinstall will wipe all data on this VM. Continue?')) return;
-    setActionVm(true);
+    setShowReinstall(false);
+    setReinstalling(true);
+    setReinstallProgress('Queuing reinstall...');
     try {
       await api.post(`/vms/${vm.id}/reinstall`, { templateId: reinstallTemplateId });
-      toast.success('Reinstall queued');
-      setShowReinstall(false);
+      setReinstallProgress('Provisioning...');
+      const poll = setInterval(async () => {
+        try {
+          const res = await api.get(`/vms/${vm.id}`);
+          mutate(res.data, { revalidate: false });
+          if (res.data.status !== 'provisioning') {
+            clearInterval(poll);
+            setReinstalling(false);
+            if (res.data.status === 'error') toast.error('Reinstall failed');
+            else toast.success('Reinstall complete');
+          }
+        } catch {
+          clearInterval(poll);
+          setReinstalling(false);
+          toast.error('Failed to check reinstall status');
+        }
+      }, 5000);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Reinstall failed');
-    } finally {
-      setActionVm(false);
+      setReinstalling(false);
     }
+  };
+
+  const handleCancelReinstall = async () => {
+    // no cancel possible — just dismiss overlay
+    setReinstalling(false);
   };
 
   const handleMountIso = async (e: React.FormEvent) => {
@@ -983,6 +1007,22 @@ export default function VmDetailPage() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Reinstall Progress Overlay */}
+      {reinstalling && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-8 max-w-sm w-full mx-4 text-center">
+            <div className="animate-spin h-10 w-10 border-4 border-blue-400 border-t-transparent rounded-full mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Reinstalling OS</h3>
+            <p className="text-sm text-slate-500 mb-4">{reinstallProgress}</p>
+            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 mb-4">
+              <div className="bg-blue-500 h-2 rounded-full animate-pulse" style={{ width: '60%' }} />
+            </div>
+            <p className="text-xs text-slate-400">VM status updates every 5 seconds. Do not close this page.</p>
+            <button onClick={handleCancelReinstall} className="mt-4 text-xs text-slate-400 hover:text-slate-600 underline">Dismiss</button>
           </div>
         </div>
       )}

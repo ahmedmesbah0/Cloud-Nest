@@ -238,7 +238,12 @@ export class VmService {
     const template = await this.prisma.vmTemplate.findUnique({ where: { id: templateId } });
     if (!template) throw new BadRequestException('Template not found');
 
-    await this.jobService.enqueueJob('reinstall-vm', {
+    await this.prisma.vm.update({
+      where: { id: vmId },
+      data: { status: 'provisioning' },
+    });
+
+    const result = await this.jobService.enqueueJob('reinstall-vm', {
       vmId,
       proxmoxId: vm.proxmoxId,
       templateVmid: Number(template.proxmoxTemplateId),
@@ -247,7 +252,7 @@ export class VmService {
       auditLog: { action: 'vm.reinstall', resource: 'vm', resourceId: vmId },
     });
 
-    return { message: 'Reinstall queued' };
+    return { message: 'Reinstall queued', ...result };
   }
 
   async mountIso(userId: string, vmId: string, iso: string, storage?: string) {
