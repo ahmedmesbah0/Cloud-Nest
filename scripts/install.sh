@@ -497,7 +497,7 @@ seed_admin_account() {
     return 1
   fi
 
-  ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npm run seed:admin || {
+  ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" npm run seed:admin -w apps/api || {
     err "Admin seeding failed"
     return 1
   }
