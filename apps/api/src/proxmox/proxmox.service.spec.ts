@@ -156,14 +156,14 @@ describe('ProxmoxService', () => {
       mockClient.post.mockResolvedValue({ data: { data: 'UPID:...' } });
       const result = await service.startVm(100);
       expect(result).toBe('UPID:...');
-      expect(mockClient.post).toHaveBeenCalledWith('/nodes/pve/qemu/100/status/start', undefined);
+      expect(mockClient.post).toHaveBeenCalledWith('/nodes/pve/qemu/100/status/start', {});
     });
 
     it('stops a VM', async () => {
       mockClient.post.mockResolvedValue({ data: { data: 'UPID:...' } });
       const result = await service.stopVm(100);
       expect(result).toBe('UPID:...');
-      expect(mockClient.post).toHaveBeenCalledWith('/nodes/pve/qemu/100/status/stop', undefined);
+      expect(mockClient.post).toHaveBeenCalledWith('/nodes/pve/qemu/100/status/stop', {});
     });
 
     it('deletes a VM', async () => {
@@ -181,7 +181,7 @@ describe('ProxmoxService', () => {
 
       const result = await service.getVncTicket(100);
       expect(result).toEqual(mockTicket);
-      expect(mockClient.post).toHaveBeenCalledWith('/nodes/pve/qemu/100/vncproxy', undefined);
+      expect(mockClient.post).toHaveBeenCalledWith('/nodes/pve/qemu/100/vncproxy', {});
     });
   });
 

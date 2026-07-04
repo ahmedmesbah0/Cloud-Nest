@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
+import https from 'node:https';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ProxmoxNode {
@@ -77,6 +78,7 @@ export class ProxmoxService implements OnModuleInit {
       headers: {
         'Content-Type': 'application/json',
       },
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
     });
   }
 
@@ -134,7 +136,7 @@ export class ProxmoxService implements OnModuleInit {
 
   private async post<T>(path: string, body?: Record<string, unknown>): Promise<T> {
     this.assertInitialized();
-    const { data } = await this.client.post<{ data: T }>(path, body);
+    const { data } = await this.client.post<{ data: T }>(path, body ?? {});
     return data.data;
   }
 
@@ -171,19 +173,20 @@ export class ProxmoxService implements OnModuleInit {
     options: ProxmoxCreateVmOptions,
     node: string = this.defaultNode,
   ): Promise<{ vmid: number }> {
+    const storage = options.storage ?? this.defaultStorage;
     const body: Record<string, unknown> = {
       vmid: options.vmid,
       name: options.name,
       cores: options.cores,
       memory: options.memory,
       ostype: 'l26',
-      net: options.net ?? 'virtio,bridge=vmbr0',
-      storage: options.storage ?? this.defaultStorage,
-      disks: `virtio0:${options.disk},format=qcow2`,
+      net0: options.net ?? 'virtio,bridge=vmbr0',
+      storage,
+      virtio0: `${storage}:${options.disk}`,
     };
 
     if (options.iso) {
-      body.cdrom = `local:iso/${options.iso},media=cdrom`;
+      body.ide2 = `local:iso/${options.iso},media=cdrom`;
     }
 
     if (options.cloudInitConfig) {
