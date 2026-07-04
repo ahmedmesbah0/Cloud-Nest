@@ -406,12 +406,6 @@ write_env_file() {
 
   PUBLIC_HOST="$(get_public_host)"
 
-  if [ -z "${ADMIN_EMAIL:-}" ]; then
-    ADMIN_EMAIL="admin"
-  fi
-  if [ -z "${ADMIN_PASSWORD:-}" ]; then
-    ADMIN_PASSWORD="admin123"
-  fi
   if [ -z "${JWT_ACCESS_SECRET:-}" ]; then
     JWT_ACCESS_SECRET="$(openssl rand -hex 48)"
   fi
@@ -676,6 +670,11 @@ perform_install() {
   ensure_postgres
   ensure_redis
   clone_or_update_repo
+
+  # Set defaults before any step that references them
+  : "${ADMIN_EMAIL:=admin}"
+  : "${ADMIN_PASSWORD:=admin123}"
+
   install_dependencies
   setup_prisma
   seed_admin_account
