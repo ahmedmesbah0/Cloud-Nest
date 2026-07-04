@@ -20,6 +20,7 @@ const JOB_STATUS_MAP: Partial<Record<ProxmoxJobType, VmStatus>> = {
   'delete-vm': 'deleted',
   'reinstall-vm': 'stopped',
   'rollback-snapshot': 'stopped',
+  'restore-backup': 'stopped',
 };
 
 @Processor('proxmox-jobs', {
@@ -111,9 +112,25 @@ export class ProxmoxJobConsumer extends WorkerHost {
 
       // Update backup record on success
       if (type === 'backup-vm' && payload.backupId) {
+        const backupRecord = await this.prisma.backup.findUnique({
+          where: { id: payload.backupId as string },
+          include: { vm: { include: { node: true } } },
+        });
+        let volid: string | null = null;
+        if (backupRecord?.vm?.node?.proxmoxNodeId && backupRecord.storage) {
+          try {
+            const content = await this.proxmox.getStorageContent(backupRecord.storage, backupRecord.vm.node.proxmoxNodeId);
+            const backupFiles = (content as any[]).filter(
+              (c: any) => c.content === 'backup' && String(c.vmid) === String(payload.vmid),
+            );
+            if (backupFiles.length > 0) {
+              volid = backupFiles[0].volid;
+            }
+          } catch { /* non-critical */ }
+        }
         await this.prisma.backup.update({
           where: { id: payload.backupId as string },
-          data: { status: 'completed', completedAt: new Date(), proxmoxId: String(result) },
+          data: { status: 'completed', completedAt: new Date(), proxmoxId: String(result), volid },
         });
         if (userId) {
           this.vmGateway.emitUserNotification(userId, 'vm-notification', {
@@ -276,6 +293,15 @@ export class ProxmoxJobConsumer extends WorkerHost {
           },
           node,
         );
+
+      case 'restore-backup': {
+        const vmid = payload.vmid as number;
+        await this.proxmox.assertVmManaged(vmid, node);
+        await this.proxmox.stopVm(vmid, node);
+        const archive = payload.archive as string;
+        if (!archive) throw new Error('archive is required for restore-backup');
+        return this.proxmox.restoreVmBackup(vmid, archive, { force: true }, node);
+      }
 
       case 'resize-vm': {
         const vmid = payload.vmid as number;

@@ -183,6 +183,17 @@ export class VmController {
     return this.vmService.deleteBackup(userId, id, backupId);
   }
 
+  @Post(':id/backups/:backupId/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Restore VM from a backup' })
+  async restoreBackup(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+  ) {
+    return this.vmService.restoreBackup(userId, id, backupId);
+  }
+
   // --- Snapshots ---
 
   @Get(':id/snapshots')

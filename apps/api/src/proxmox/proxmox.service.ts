@@ -329,6 +329,21 @@ export class ProxmoxService implements OnModuleInit {
     return this.post<string>(`/nodes/${node}/vzdump`, body);
   }
 
+  async restoreVmBackup(
+    vmid: number,
+    archive: string,
+    options?: { storage?: string; force?: boolean },
+    node: string = this.defaultNode,
+  ): Promise<string> {
+    const body: Record<string, unknown> = {
+      vmid,
+      archive,
+      force: options?.force ?? 1,
+    };
+    if (options?.storage) body.storage = options.storage;
+    return this.post<string>(`/nodes/${node}/vzdump/restore`, body);
+  }
+
   async updateVmConfig(
     vmid: number,
     config: Record<string, unknown>,

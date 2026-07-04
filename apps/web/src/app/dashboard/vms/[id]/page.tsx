@@ -274,6 +274,16 @@ export default function VmDetailPage() {
     }
   };
 
+  const handleRestoreBackup = async (backupId: string, name: string) => {
+    if (!confirm(`Restore VM from backup "${name}"? This will stop the VM and overwrite its disk.`)) return;
+    try {
+      await api.post(`/vms/${vm.id}/backups/${backupId}/restore`);
+      toast.success('Backup restore queued');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Restore failed');
+    }
+  };
+
   const handleCreateSnapshot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!snapshotName) return;
@@ -678,7 +688,12 @@ export default function VmDetailPage() {
                     <td className="py-2 text-slate-500">{b.sizeMb ? `${b.sizeMb} MB` : '-'}</td>
                     <td className="py-2 text-slate-500">{new Date(b.createdAt).toLocaleString()}</td>
                     <td className="py-2 text-right">
-                      <button onClick={() => handleDeleteBackup(b.id)} className="text-red-500 hover:text-red-700"><Trash className="h-4 w-4" /></button>
+                      <div className="flex gap-1 justify-end">
+                        {b.status === 'completed' && (
+                          <button onClick={() => handleRestoreBackup(b.id, b.name)} className="text-amber-500 hover:text-amber-700" title="Restore"><RefreshCw className="h-4 w-4" /></button>
+                        )}
+                        <button onClick={() => handleDeleteBackup(b.id)} className="text-red-500 hover:text-red-700" title="Delete"><Trash className="h-4 w-4" /></button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -16,6 +16,7 @@ export type ProxmoxJobType =
   | 'create-snapshot'
   | 'delete-snapshot'
   | 'backup-vm'
+  | 'restore-backup'
   | 'clone-vm'
   | 'resize-vm'
   | 'reinstall-vm'

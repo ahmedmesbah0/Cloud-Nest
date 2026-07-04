@@ -361,6 +361,23 @@ export class VmService {
       },
     });
 
+    // Retention/FIFO: if more than 5 backups exist, delete the oldest completed one
+    const existing = await this.prisma.backup.findMany({
+      where: { vmId: vm.id, status: 'completed' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const MAX_BACKUPS = 5;
+    if (existing.length >= MAX_BACKUPS) {
+      const toDelete = existing[0];
+      await this.prisma.backup.update({
+        where: { id: toDelete.id },
+        data: { status: 'failed' },
+      });
+      await this.prisma.auditLog.create({
+        data: { userId, action: 'vm.backup.retention-evict', resource: 'backup', resourceId: toDelete.id, metadata: { vmId, reason: 'FIFO eviction' } },
+      });
+    }
+
     await this.jobService.enqueueJob('backup-vm', {
       vmId: vm.id,
       vmid: vm.proxmoxId,
@@ -398,6 +415,38 @@ export class VmService {
     });
 
     return { message: 'Backup deleted' };
+  }
+
+  async restoreBackup(userId: string, vmId: string, backupId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const backup = await this.prisma.backup.findUnique({ where: { id: backupId } });
+    if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
+    if (backup.status !== 'completed') throw new BadRequestException('Backup must be completed to restore');
+    if (!vm.proxmoxId || !vm.nodeId) throw new BadRequestException('VM has no Proxmox ID or node');
+
+    let archive = backup.volid;
+    if (!archive) {
+      const node = await this.prisma.node.findUnique({ where: { id: vm.nodeId } });
+      if (!node) throw new NotFoundException('Node not found');
+      const content = await this.proxmox.getStorageContent(backup.storage, node.proxmoxNodeId);
+      const backupFiles = (content as any[]).filter(
+        (c: any) => c.content === 'backup' && String(c.vmid) === String(vm.proxmoxId),
+      );
+      if (backupFiles.length === 0) throw new BadRequestException('Backup file not found in storage');
+      archive = backupFiles.sort((a: any, b: any) => new Date(b.ctime).getTime() - new Date(a.ctime).getTime())[0].volid;
+    }
+
+    await this.jobService.enqueueJob('restore-backup', {
+      vmId: vm.id,
+      vmid: vm.proxmoxId,
+      archive,
+      node: vm.nodeId,
+    }, {
+      userId,
+      auditLog: { action: 'vm.backup.restore', resource: 'vm', resourceId: vm.id },
+    });
+
+    return { message: 'Backup restore queued' };
   }
 
   async listSnapshots(userId: string, vmId: string) {

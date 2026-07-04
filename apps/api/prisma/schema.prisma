@@ -412,6 +412,7 @@ model Backup {
   status     BackupStatus @default(pending)
   storage    String       @default("local-lvm")
   proxmoxId  String?
+  volid      String?
   nodeId     String?
   sizeMb     Int?
   createdAt  DateTime     @default(now())
