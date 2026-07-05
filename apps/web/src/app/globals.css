@@ -2,57 +2,164 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius: 0.5rem;
+}
+
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0.042 265.755);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.965 0.001 286.375);
-  --secondary-foreground: oklch(0.205 0.042 265.755);
-  --muted: oklch(0.965 0.001 286.375);
-  --muted-foreground: oklch(0.556 0.019 277.5);
-  --accent: oklch(0.965 0.001 286.375);
-  --accent-foreground: oklch(0.205 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0.004 286.375);
-  --input: oklch(0.922 0.004 286.375);
-  --ring: oklch(0.205 0.042 265.755);
+  --background: 0 0% 100%;
+  --foreground: 220 15% 15%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 15% 15%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 15% 15%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 220 15% 15%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 8% 46%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 220 15% 15%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 262 83% 58%;
   --radius: 0.5rem;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.145 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.145 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0.042 265.755);
-  --secondary: oklch(0.269 0.015 269.5);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0.015 269.5);
-  --muted-foreground: oklch(0.708 0.018 278.5);
-  --accent: oklch(0.269 0.015 269.5);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.269 0.015 269.5);
-  --input: oklch(0.269 0.015 269.5);
-  --ring: oklch(0.708 0.018 278.5);
+  --background: 220 15% 6%;
+  --foreground: 0 0% 95%;
+  --card: 120 14% 6%;
+  --card-foreground: 0 0% 95%;
+  --popover: 120 14% 6%;
+  --popover-foreground: 0 0% 95%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 15% 10%;
+  --secondary-foreground: 0 0% 95%;
+  --muted: 220 15% 10%;
+  --muted-foreground: 220 8% 65%;
+  --accent: 220 15% 10%;
+  --accent-foreground: 0 0% 95%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 95%;
+  --border: 220 15% 8%;
+  --input: 220 15% 8%;
+  --ring: 262 83% 58%;
+}
+
+/* Accent colors — inspired by FeatherPanel */
+:root .accent-blue,
+.dark .accent-blue {
+  --primary: 221 83% 53%; --ring: 221 83% 53%;
+}
+
+:root .accent-green,
+.dark .accent-green {
+  --primary: 142 71% 45%; --ring: 142 71% 45%;
+}
+
+:root .accent-red,
+.dark .accent-red {
+  --primary: 0 84% 60%; --ring: 0 84% 60%;
+}
+
+:root .accent-orange,
+.dark .accent-orange {
+  --primary: 24 95% 53%; --ring: 24 95% 53%;
+}
+
+:root .accent-yellow,
+.dark .accent-yellow {
+  --primary: 45 93% 47%; --ring: 45 93% 47%;
+}
+
+:root .accent-teal,
+.dark .accent-teal {
+  --primary: 173 80% 40%; --ring: 173 80% 40%;
+}
+
+:root .accent-pink,
+.dark .accent-pink {
+  --primary: 330 81% 60%; --ring: 330 81% 60%;
+}
+
+:root .accent-cyan,
+.dark .accent-cyan {
+  --primary: 189 94% 43%; --ring: 189 94% 43%;
+}
+
+:root .accent-purple,
+.dark .accent-purple {
+  --primary: 262 83% 58%; --ring: 262 83% 58%;
+}
+
+:root .accent-indigo,
+.dark .accent-indigo {
+  --primary: 239 84% 67%; --ring: 239 84% 67%;
+}
+
+:root .accent-rose,
+.dark .accent-rose {
+  --primary: 346 77% 50%; --ring: 346 77% 50%;
+}
+
+:root .accent-amber,
+.dark .accent-amber {
+  --primary: 38 92% 50%; --ring: 38 92% 50%;
+}
+
+:root .accent-lime,
+.dark .accent-lime {
+  --primary: 85 85% 50%; --ring: 85 85% 50%;
+}
+
+:root .accent-emerald,
+.dark .accent-emerald {
+  --primary: 160 84% 39%; --ring: 160 84% 39%;
+}
+
+:root .accent-violet,
+.dark .accent-violet {
+  --primary: 258 90% 66%; --ring: 258 90% 66%;
 }
 
 * {
-  border-color: var(--border);
+  border-color: hsl(var(--border));
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* FeatherPanel-inspired glass card effect */
+@utility glass-card {
+  background: hsl(var(--card) / 0.5);
+  backdrop-filter: blur(12px);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
 }

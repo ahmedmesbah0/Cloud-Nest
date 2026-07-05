@@ -64,8 +64,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (loading || !user) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="animate-spin h-8 w-8 border-2 border-blue-400 border-t-transparent rounded-full" />
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
       </div>
     );
   }
@@ -73,17 +73,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isAdmin = user.roles?.some((r) => r.role.name === 'admin');
 
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-900">
+    <div className="min-h-screen bg-background">
       <aside className={cn(
-        'fixed inset-y-0 left-0 z-50 w-64 bg-slate-50 dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transform transition-transform lg:translate-x-0',
+        'fixed inset-y-0 left-0 z-50 w-64 bg-card border-r border-border transform transition-transform lg:translate-x-0',
         sidebarOpen ? 'translate-x-0' : '-translate-x-full',
       )}>
-        <div className="flex items-center justify-between h-16 px-4 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center justify-between h-16 px-4 border-b border-border">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <Cloud className="h-7 w-7 text-blue-500" />
-            <span className="font-bold text-slate-900 dark:text-white">CloudNest</span>
+            <Cloud className="h-7 w-7 text-primary" />
+            <span className="font-bold text-foreground">CloudNest</span>
           </Link>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-500">
+          <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-muted-foreground">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -98,8 +98,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 className={cn(
                   'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
                   active
-                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-muted-foreground hover:bg-muted',
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -114,8 +114,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 className={cn(
                   'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm transition-colors',
                   pathname.startsWith('/dashboard/admin')
-                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-muted-foreground hover:bg-muted',
                 )}
               >
                 <span className="flex items-center gap-3">
@@ -138,8 +138,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         className={cn(
                           'flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm transition-colors',
                           active
-                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
-                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700',
+                            ? 'bg-primary/10 text-primary font-medium'
+                            : 'text-muted-foreground hover:bg-muted',
                         )}
                       >
                         <Icon className="h-3.5 w-3.5" />
@@ -155,9 +155,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur border-b border-slate-200 dark:border-slate-700">
+        <header className="sticky top-0 z-40 bg-background/80 backdrop-blur border-b border-border">
           <div className="flex items-center justify-between h-16 px-4">
-            <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-slate-500">
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-muted-foreground">
               <Menu className="h-5 w-5" />
             </button>
 
@@ -167,7 +167,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {mounted && (
                 <button
                   onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                  className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  className="text-muted-foreground hover:text-foreground"
                 >
                   {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
                 </button>
@@ -175,11 +175,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
               <Link
                 href="/dashboard/notifications"
-                className="relative text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                className="relative text-muted-foreground hover:text-foreground"
               >
                 <Bell className="h-5 w-5" />
                 {(notifData?.unreadCount ?? 0) > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-red-500 rounded-full">
+                  <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-destructive rounded-full">
                     {notifData.unreadCount > 9 ? '9+' : notifData.unreadCount}
                   </span>
                 )}
@@ -188,9 +188,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div className="relative">
                 <button
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
                 >
-                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-medium">
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
                     {(user.name || user.email)[0].toUpperCase()}
                   </div>
                   <span className="hidden sm:block">{user.name || user.email}</span>
@@ -200,21 +200,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {userMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
-                    <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-20 py-1">
-                      <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-700">
-                        <p className="text-sm font-medium text-slate-900 dark:text-white">{user.name || 'User'}</p>
-                        <p className="text-xs text-slate-500">{user.email}</p>
+                    <div className="absolute right-0 mt-2 w-56 bg-card border border-border rounded-lg shadow-lg z-20 py-1">
+                      <div className="px-4 py-2 border-b border-border">
+                        <p className="text-sm font-medium text-foreground">{user.name || 'User'}</p>
+                        <p className="text-xs text-muted-foreground">{user.email}</p>
                       </div>
                       <Link
                         href="/dashboard/settings/ssh-keys"
                         onClick={() => setUserMenuOpen(false)}
-                        className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                        className="block px-4 py-2 text-sm text-foreground hover:bg-muted"
                       >
                         Settings
                       </Link>
                       <button
                         onClick={() => { setUserMenuOpen(false); logout(); }}
-                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+                        className="w-full text-left px-4 py-2 text-sm text-destructive hover:bg-muted flex items-center gap-2"
                       >
                         <LogOut className="h-4 w-4" /> Sign out
                       </button>
