@@ -7,9 +7,10 @@ import { VncProxyGateway } from './vnc-proxy.gateway';
 import { JwtService } from '@nestjs/jwt';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+import { VmSubusersModule } from '../vm-subusers/vm-subusers.module';
 
 @Module({
-  imports: [ResourcePoolModule, SubscriptionsModule],
+  imports: [ResourcePoolModule, SubscriptionsModule, VmSubusersModule],
   controllers: [VmController],
   providers: [VmService, VmRepository, VmGateway, VncProxyGateway, JwtService],
   exports: [VmService, VmGateway],

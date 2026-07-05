@@ -76,6 +76,7 @@ model User {
   packagePurchases ResourcePackagePurchase[]
   referralCode    ReferralCode?
   referralUsages  ReferralUsage[]
+  vmSubusers      VmSubuser[]
 }
 
 model Role {
@@ -565,6 +566,7 @@ model Vm {
   backups      Backup[]
   resourceMetrics ResourceMetric[]
   subscription    Subscription?
+  subusers        VmSubuser[]
 }
 
 model VmTemplate {
@@ -646,6 +648,19 @@ model AuditLog {
 
   user      User?    @relation(fields: [userId], references: [id])
 
+}
+
+model VmSubuser {
+  id           String   @id @default(cuid())
+  vmId         String
+  userId       String
+  permissions  String[] @default(["power", "console"])
+  createdAt    DateTime @default(now())
+
+  vm           Vm       @relation(fields: [vmId], references: [id])
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@unique([vmId, userId])
 }
 
 model Notification {

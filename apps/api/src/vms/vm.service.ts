@@ -783,4 +783,16 @@ export class VmService {
 
     return { ...vncInfo, host: process.env.PROXMOX_HOST || '172.16.1.10' };
   }
+
+  async getActivities(userId: string, vmId: string, page = 1, limit = 50) {
+    const vm = await this.vmRepo.findVmById(vmId);
+    if (!vm) throw new NotFoundException('VM not found');
+    if (vm.userId !== userId) throw new NotFoundException('VM not found');
+    const skip = (page - 1) * limit;
+    const [activities, total] = await Promise.all([
+      this.vmRepo.findAuditLogsByResource('vm', vmId, skip, limit),
+      this.vmRepo.countAuditLogsByResource('vm', vmId),
+    ]);
+    return { activities, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
 }

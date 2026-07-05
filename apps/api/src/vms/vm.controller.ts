@@ -328,4 +328,17 @@ export class VmController {
   async deleteFirewallRule(@CurrentUser('id') userId: string, @Param('id') id: string, @Param('pos') pos: number) {
     return this.vmService.deleteFirewallRule(userId, id, pos);
   }
+
+  // --- Activity Log ---
+
+  @Get(':id/activities')
+  @ApiOperation({ summary: 'Get activity log for a VM' })
+  async getActivities(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.vmService.getActivities(userId, id, page ?? 1, limit ?? 50);
+  }
 }

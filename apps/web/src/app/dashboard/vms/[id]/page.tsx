@@ -2,9 +2,9 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import api from '@/lib/api';
-import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu, Wifi, Globe } from 'lucide-react';
+import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu, Wifi, Globe, Users } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -113,6 +113,78 @@ export default function VmDetailPage() {
       }
     }, [mutateBackups, mutateSnapshots]),
   );
+
+  // --- Subusers ---
+  const [subusers, setSubusers] = useState<any[]>([]);
+  const [subusersLoading, setSubusersLoading] = useState(true);
+  const [showAddSubuser, setShowAddSubuser] = useState(false);
+  const [subuserEmail, setSubuserEmail] = useState('');
+  const [subuserPermissions, setSubuserPermissions] = useState<string[]>(['power', 'console']);
+  const [savingSubuser, setSavingSubuser] = useState(false);
+
+  const fetchSubusers = useCallback(async () => {
+    if (!vm) return;
+    setSubusersLoading(true);
+    try {
+      const res = await api.get(`/vms/${vm.id}/subusers`);
+      setSubusers(res.data);
+    } catch { /* not available yet */ }
+    setSubusersLoading(false);
+  }, [vm]);
+
+  useEffect(() => { fetchSubusers(); }, [fetchSubusers]);
+
+  const handleAddSubuser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subuserEmail) { toast.error('Email is required'); return; }
+    if (subuserPermissions.length === 0) { toast.error('Select at least one permission'); return; }
+    setSavingSubuser(true);
+    try {
+      await api.post(`/vms/${vm.id}/subusers`, { email: subuserEmail, permissions: subuserPermissions });
+      toast.success('Subuser added');
+      setShowAddSubuser(false);
+      setSubuserEmail('');
+      setSubuserPermissions(['power', 'console']);
+      fetchSubusers();
+    } catch (err: any) { toast.error(err.response?.data?.message || 'Failed to add subuser'); }
+    setSavingSubuser(false);
+  };
+
+  // --- Activity Log ---
+  const [activities, setActivities] = useState<any[]>([]);
+  const [activitiesTotal, setActivitiesTotal] = useState(0);
+  const [activitiesPage, setActivitiesPage] = useState(1);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activityFilter, setActivityFilter] = useState<string>('all');
+  const [selectedActivity, setSelectedActivity] = useState<any>(null);
+  const [showActivityDetail, setShowActivityDetail] = useState(false);
+
+  const fetchActivities = useCallback(async (page = 1) => {
+    if (!vm) return;
+    setActivitiesLoading(true);
+    try {
+      const res = await api.get(`/vms/${vm.id}/activities`, { params: { page, limit: 20 } });
+      setActivities(res.data.activities);
+      setActivitiesTotal(res.data.total);
+      setActivitiesPage(res.data.page);
+    } catch { /* not available yet */ }
+    setActivitiesLoading(false);
+  }, [vm]);
+
+  useEffect(() => { fetchActivities(1); }, [fetchActivities]);
+
+  const activityPages = Math.ceil(activitiesTotal / 20);
+
+  const filteredActivities = activities.filter((a: any) => {
+    if (activityFilter !== 'all' && !a.action.includes(activityFilter)) return false;
+    if (activitySearch && !a.action.toLowerCase().includes(activitySearch.toLowerCase()) && !(a.user?.name || '').toLowerCase().includes(activitySearch.toLowerCase())) return false;
+    return true;
+  });
+
+  const formatEvent = (action: string) => {
+    return action.replace(/_/g, ' ').replace(/\./g, ' ').split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  };
 
   if (error?.response?.status === 404) {
     return (
@@ -754,6 +826,84 @@ export default function VmDetailPage() {
         )}
       </div>
 
+      {/* Subusers */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Subusers</h2>
+          <button
+            onClick={() => setShowAddSubuser(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            <Users className="h-4 w-4" /> Add Subuser
+          </button>
+        </div>
+        {subusersLoading ? (
+          <p className="text-sm text-slate-500">Loading...</p>
+        ) : subusers.length === 0 ? (
+          <p className="text-sm text-slate-500">No subusers. Add team members to grant access to this VM.</p>
+        ) : (
+          <div className="space-y-3">
+            {subusers.map((su: any) => (
+              <div key={su.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">{su.user?.name || su.user?.email}</p>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {su.permissions.map((p: string) => (
+                      <span key={p} className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">{p}</span>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!confirm('Remove this subuser?')) return;
+                    try {
+                      await api.delete(`/vms/${vm.id}/subusers/${su.id}`);
+                      toast.success('Subuser removed');
+                      fetchSubusers();
+                    } catch (err: any) { toast.error(err.response?.data?.message || 'Failed to remove'); }
+                  }}
+                  className="text-red-500 hover:text-red-700 p-1"
+                >
+                  <Trash className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add Subuser Modal */}
+      {showAddSubuser && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Add Subuser</h3>
+            <form onSubmit={handleAddSubuser} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
+                <input type="email" value={subuserEmail} onChange={(e) => setSubuserEmail(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white" placeholder="collaborator@example.com" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Permissions</label>
+                <div className="space-y-2">
+                  {['power', 'console', 'backup', 'reinstall', 'settings', 'activity.read'].map((perm) => (
+                    <label key={perm} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                      <input type="checkbox" checked={subuserPermissions.includes(perm)} onChange={() => {
+                        setSubuserPermissions((prev) => prev.includes(perm) ? prev.filter((p) => p !== perm) : [...prev, perm]);
+                      }} className="rounded border-slate-300 dark:border-slate-600" />
+                      {perm === 'activity.read' ? 'View activity log' : perm.charAt(0).toUpperCase() + perm.slice(1)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowAddSubuser(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Cancel</button>
+                <button type="submit" disabled={savingSubuser} className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">{savingSubuser ? 'Adding...' : 'Add Subuser'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Resize Modal */}
       {showResize && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
@@ -1116,6 +1266,118 @@ export default function VmDetailPage() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Activity Log */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Activity Log</h2>
+          <button
+            onClick={() => fetchActivities(activitiesPage)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700"
+          >
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <input
+            type="text"
+            value={activitySearch}
+            onChange={(e) => setActivitySearch(e.target.value)}
+            placeholder="Search events..."
+            className="flex-1 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white"
+          />
+          <select
+            value={activityFilter}
+            onChange={(e) => setActivityFilter(e.target.value)}
+            className="bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-300"
+          >
+            <option value="all">All Events</option>
+            <option value="power">Power</option>
+            <option value="backup">Backup</option>
+            <option value="snapshot">Snapshot</option>
+            <option value="reinstall">Reinstall</option>
+            <option value="subuser">Subusers</option>
+            <option value="console">Console</option>
+          </select>
+        </div>
+
+        {activitiesLoading ? (
+          <p className="text-sm text-slate-500">Loading...</p>
+        ) : filteredActivities.length === 0 ? (
+          <p className="text-sm text-slate-500">No activity yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {filteredActivities.map((a: any) => (
+              <button
+                key={a.id}
+                onClick={() => { setSelectedActivity(a); setShowActivityDetail(true); }}
+                className="w-full flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-left"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">{formatEvent(a.action)}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{a.user?.name || a.user?.email || 'System'} &middot; {new Date(a.createdAt).toLocaleString()}</p>
+                </div>
+                <span className="text-xs text-slate-400 shrink-0 ml-2">{a.ipAddress || ''}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {activityPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <button
+              onClick={() => fetchActivities(activitiesPage - 1)}
+              disabled={activitiesPage <= 1}
+              className="px-3 py-1 text-sm rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 disabled:opacity-30"
+            >Previous</button>
+            <span className="text-sm text-slate-500">{activitiesPage} / {activityPages}</span>
+            <button
+              onClick={() => fetchActivities(activitiesPage + 1)}
+              disabled={activitiesPage >= activityPages}
+              className="px-3 py-1 text-sm rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 disabled:opacity-30"
+            >Next</button>
+          </div>
+        )}
+      </div>
+
+      {/* Activity Detail Modal */}
+      {showActivityDetail && selectedActivity && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">{formatEvent(selectedActivity.action)}</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-700">
+                <span className="text-sm text-slate-500">Action</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{selectedActivity.action}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-700">
+                <span className="text-sm text-slate-500">User</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{selectedActivity.user?.name || selectedActivity.user?.email || 'System'}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-700">
+                <span className="text-sm text-slate-500">Time</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{new Date(selectedActivity.createdAt).toLocaleString()}</span>
+              </div>
+              {selectedActivity.ipAddress && (
+                <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-700">
+                  <span className="text-sm text-slate-500">IP</span>
+                  <span className="text-sm font-medium text-slate-900 dark:text-white font-mono">{selectedActivity.ipAddress}</span>
+                </div>
+              )}
+              {selectedActivity.metadata && (
+                <div>
+                  <p className="text-sm text-slate-500 mb-1">Metadata</p>
+                  <pre className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 text-xs font-mono text-slate-700 dark:text-slate-300 overflow-x-auto">{JSON.stringify(selectedActivity.metadata, null, 2)}</pre>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setShowActivityDetail(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">Close</button>
+            </div>
           </div>
         </div>
       )}

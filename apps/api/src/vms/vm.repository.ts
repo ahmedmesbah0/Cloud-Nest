@@ -198,6 +198,20 @@ export class VmRepository {
     return this.db(tx).auditLog.create({ data });
   }
 
+  async findAuditLogsByResource(resource: string, resourceId: string, skip = 0, take = 50, tx?: PrismaTx) {
+    return this.db(tx).auditLog.findMany({
+      where: { resource, resourceId },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+      include: { user: { select: { id: true, email: true, name: true } } },
+    });
+  }
+
+  async countAuditLogsByResource(resource: string, resourceId: string, tx?: PrismaTx) {
+    return this.db(tx).auditLog.count({ where: { resource, resourceId } });
+  }
+
   // --- Raw Queries for resize TOCTOU check ---
 
   async lockUserPools(userId: string, tx?: PrismaTx) {
