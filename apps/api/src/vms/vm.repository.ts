@@ -17,6 +17,17 @@ export class VmRepository {
     return this.db(tx).vm.count();
   }
 
+  async countVmsByUser(userId: string, tx?: PrismaTx) {
+    return this.db(tx).vm.count({ where: { userId } });
+  }
+
+  async findUserById(userId: string, tx?: PrismaTx) {
+    return this.db(tx).user.findUnique({
+      where: { id: userId },
+      select: { id: true, isActive: true },
+    });
+  }
+
   async countByStatus(status: string, tx?: PrismaTx) {
     return this.db(tx).vm.count({ where: { status } });
   }

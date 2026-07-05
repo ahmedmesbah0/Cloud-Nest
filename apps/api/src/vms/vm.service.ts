@@ -4,6 +4,7 @@ import { VmRepository } from './vm.repository';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @Injectable()
 export class VmService {
@@ -13,6 +14,7 @@ export class VmService {
     private readonly jobService: ProxmoxJobService,
     private readonly poolService: ResourcePoolService,
     private readonly proxmox: ProxmoxService,
+    private readonly subsService: SubscriptionsService,
   ) {}
 
   async listTemplates() {
@@ -28,6 +30,15 @@ export class VmService {
     diskGb: number;
     sshKeyId?: string;
   }) {
+    const user = await this.vmRepo.findUserById(userId);
+    if (!user) throw new BadRequestException('User not found');
+    if (!user.isActive) throw new ForbiddenException('Account is suspended');
+
+    const activeSubCount = await this.subsService.countActiveByUser(userId);
+    if (activeSubCount === 0) {
+      throw new ForbiddenException('An active subscription is required to create servers');
+    }
+
     const pool = await this.vmRepo.findPoolById(dto.poolId);
     if (!pool) throw new BadRequestException('Resource pool not found');
     if (pool.userId !== userId) throw new ForbiddenException('Not your pool');

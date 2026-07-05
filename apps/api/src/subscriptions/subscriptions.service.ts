@@ -515,4 +515,8 @@ export class SubscriptionsService {
   async countActive() {
     return this.subsRepo.countSubscriptions({ status: 'active' });
   }
+
+  async countActiveByUser(userId: string) {
+    return this.subsRepo.countSubscriptions({ userId, status: 'active' });
+  }
 }

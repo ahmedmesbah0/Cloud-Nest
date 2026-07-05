@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 describe('VmService', () => {
   let service: VmService;
@@ -14,6 +15,7 @@ describe('VmService', () => {
   let mockJobService: any;
   let mockPoolService: any;
   let mockProxmoxService: any;
+  let mockSubsService: any;
 
   const store: Record<string, any> = {
     vms: new Map<string, any>(),
@@ -63,6 +65,10 @@ describe('VmService', () => {
     mockPoolService = {
       getPoolAvailable: jest.fn().mockResolvedValue({ cores: 10, memoryMb: 20000, diskGb: 500, ips: 5 }),
       allocateResources: jest.fn().mockResolvedValue({ success: true, message: 'allocated' }),
+    };
+
+    mockSubsService = {
+      countActiveByUser: jest.fn().mockResolvedValue(1),
     };
 
     mockProxmoxService = {
@@ -115,6 +121,10 @@ describe('VmService', () => {
 
     mockRepo = {
       // VM
+      findUserById: jest.fn(async (userId: string) => {
+        return { id: userId, isActive: true };
+      }),
+      countVmsByUser: jest.fn(async (_userId: string) => store.vms.size),
       findVmById: jest.fn(async (id: string) => store.vms.get(id) ?? null),
       findVmsByUser: jest.fn(async (userId: string) => {
         return Array.from(store.vms.values()).filter((v: any) => v.userId === userId);
@@ -236,6 +246,7 @@ describe('VmService', () => {
         { provide: ProxmoxJobService, useValue: mockJobService },
         { provide: ResourcePoolService, useValue: mockPoolService },
         { provide: ProxmoxService, useValue: mockProxmoxService },
+        { provide: SubscriptionsService, useValue: mockSubsService },
       ],
     }).compile();
 
