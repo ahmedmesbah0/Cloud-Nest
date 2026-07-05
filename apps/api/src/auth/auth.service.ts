@@ -21,6 +21,7 @@ import { Enable2faDto } from './dto/enable-2fa.dto';
 import { Verify2faDto } from './dto/verify-2fa.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
 const totp = new TOTP({ crypto: new NobleCryptoPlugin(), base32: new ScureBase32Plugin() });
@@ -169,6 +170,35 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
     return user;
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const data: Record<string, any> = {};
+    if (dto.name !== undefined) data.name = dto.name;
+
+    if (Object.keys(data).length === 0) {
+      return this.getProfile(userId);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.authRepository.updateUser(userId, data, tx);
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'update-profile',
+          resource: 'user',
+          resourceId: userId,
+          metadata: JSON.stringify(data),
+        },
+      });
+    });
+
+    return this.getProfile(userId);
   }
 
   async verify2fa(userId: string, dto: Verify2faDto) {

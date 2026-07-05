@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { useTheme } from 'next-themes';
 import {
   Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
-  LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Key, Terminal, Shield,
+  LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Shield,
   Users, Settings, FileText, UserCheck, HardDrive, Bell, Globe, Gift, BarChart3, MessageSquare,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
@@ -18,8 +18,7 @@ const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/vms', label: 'VMs', icon: Server },
   { href: '/dashboard/billing', label: 'Billing', icon: CreditCard },
-  { href: '/dashboard/settings/ssh-keys', label: 'SSH Keys', icon: Key },
-  { href: '/dashboard/settings/api-keys', label: 'API Keys', icon: Terminal },
+  { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   { href: '/dashboard/support', label: 'Support', icon: LifeBuoy },
 ];
 
@@ -208,7 +207,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <p className="text-xs text-muted-foreground">{user.email}</p>
                       </div>
                       <Link
-                        href="/dashboard/settings/ssh-keys"
+                        href="/dashboard/settings"
                         onClick={() => setUserMenuOpen(false)}
                         className="block px-4 py-2 text-sm text-foreground hover:bg-muted"
                       >
