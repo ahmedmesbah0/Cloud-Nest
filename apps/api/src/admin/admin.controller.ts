@@ -1,12 +1,12 @@
 import {
-  Controller, Get, Post, Put, Delete,
+  Controller, Get, Post, Put, Patch, Delete,
   Body, Param, Query, UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import {
-  PaginationQueryDto, UpdateUserDto, CreditWalletDto,
-  CreateNodeDto, UpdateNodeDto, SetSettingDto,
+  PaginationQueryDto, AuditLogFilterDto, UpdateUserDto, CreditWalletDto,
+  CreateNodeDto, UpdateNodeDto, UpdateNodeStatusDto, SetSettingDto,
   CreateRoleDto, UpdateRoleDto, AddPermissionDto, AdminReplyTicketDto,
 } from './dto/admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -163,6 +163,12 @@ export class AdminController {
     return this.adminService.updateNode(adminUserId, id, dto);
   }
 
+  @Patch('nodes/:id/status')
+  @ApiOperation({ summary: 'Update node status and location assignment' })
+  async updateNodeStatus(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: UpdateNodeStatusDto) {
+    return this.adminService.updateNodeStatus(adminUserId, id, dto);
+  }
+
   @Get('settings')
   @ApiOperation({ summary: 'Get all system settings' })
   async getSettings() {
@@ -197,10 +203,22 @@ export class AdminController {
     return this.adminService.deleteSetting(key);
   }
 
+  @Get('analytics')
+  @ApiOperation({ summary: 'Analytics & KPIs' })
+  async getAnalytics() {
+    return this.adminService.getAnalytics();
+  }
+
   @Get('audit-logs')
-  @ApiOperation({ summary: 'View audit logs' })
-  async getAuditLogs(@Query() query: PaginationQueryDto) {
-    return this.adminService.getAuditLogs(query.page ?? 1, query.limit ?? 100);
+  @ApiOperation({ summary: 'View audit logs with filters' })
+  async getAuditLogs(@Query() query: AuditLogFilterDto) {
+    return this.adminService.getAuditLogs(query.page ?? 1, query.limit ?? 100, {
+      action: query.action,
+      resource: query.resource,
+      userId: query.userId,
+      startDate: query.startDate,
+      endDate: query.endDate,
+    });
   }
 
   @Get('roles')

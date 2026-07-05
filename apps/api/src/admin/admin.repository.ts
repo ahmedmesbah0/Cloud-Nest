@@ -238,16 +238,17 @@ export class AdminRepository {
   }
 
   // --- AuditLog ---
-  async findAuditLogs(skip: number, take: number, tx?: PrismaTx) {
+  async findAuditLogs(skip: number, take: number, where?: Record<string, unknown>, tx?: PrismaTx) {
     return this.db(tx).auditLog.findMany({
       skip, take,
+      where: where as any,
       orderBy: { createdAt: 'desc' },
       include: { user: { select: { email: true, name: true } } },
     });
   }
 
-  async countAuditLogs(tx?: PrismaTx) {
-    return this.db(tx).auditLog.count();
+  async countAuditLogs(where?: Record<string, unknown>, tx?: PrismaTx) {
+    return this.db(tx).auditLog.count({ where: where as any });
   }
 
   // --- Role ---
@@ -397,5 +398,39 @@ export class AdminRepository {
 
   async createManyNotifications(data: Array<Record<string, unknown>>, tx?: PrismaTx) {
     return this.db(tx).notification.createMany({ data });
+  }
+
+  // --- Analytics ---
+  async countUsersCreatedSince(date: Date, tx?: PrismaTx) {
+    return this.db(tx).user.count({ where: { createdAt: { gte: date } } });
+  }
+
+  async countVmsByStatusGroup(tx?: PrismaTx) {
+    const vms = await this.db(tx).vm.groupBy({ by: ['status'], _count: true }) as Array<{ status: string; _count: number }>;
+    const result: Record<string, number> = {};
+    for (const v of vms) result[v.status] = v._count;
+    return result;
+  }
+
+  async countSubscriptions(tx?: PrismaTx) {
+    return this.db(tx).subscription.count();
+  }
+
+  async countActiveSubscriptions(tx?: PrismaTx) {
+    return this.db(tx).subscription.count({ where: { status: 'active' } });
+  }
+
+  async countPendingTickets(tx?: PrismaTx) {
+    return this.db(tx).ticket.count({ where: { status: 'open' } });
+  }
+
+  async sumInvoiceTotal(tx?: PrismaTx) {
+    const agg = await this.db(tx).invoice.aggregate({ _sum: { totalCents: true } });
+    return agg._sum.totalCents ?? 0;
+  }
+
+  async sumPaidInvoiceTotal(tx?: PrismaTx) {
+    const agg = await this.db(tx).invoice.aggregate({ where: { status: 'paid' }, _sum: { totalCents: true } });
+    return agg._sum.totalCents ?? 0;
   }
 }

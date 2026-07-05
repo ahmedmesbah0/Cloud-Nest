@@ -3,14 +3,16 @@
 import useSWR from 'swr';
 import api from '@/lib/api';
 import { formatCents, formatDateTime } from '@/lib/utils';
-import { Users, Server, Activity, HardDrive, CreditCard } from 'lucide-react';
+import { Users, Server, Activity, HardDrive, CreditCard, Ticket, TrendingUp, UserPlus } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const fetcher = (url: string) => api.get(url).then((r) => r.data);
 
 export default function AdminDashboardPage() {
   const { data: stats } = useSWR('/admin/dashboard', fetcher);
+  const { data: analytics } = useSWR('/admin/analytics', fetcher);
 
-  if (!stats) {
+  if (!stats || !analytics) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin h-8 w-8 border-2 border-blue-400 border-t-transparent rounded-full" />
@@ -23,15 +25,19 @@ export default function AdminDashboardPage() {
     { label: 'Total VMs', value: stats.totalVms, icon: Server, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/20' },
     { label: 'Running VMs', value: stats.activeVms, icon: Activity, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20' },
     { label: 'Nodes', value: stats.totalNodes, icon: HardDrive, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-900/20' },
-    { label: 'Wallets', value: stats.totalWallets, icon: CreditCard, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-    { label: 'Revenue', value: formatCents(stats.totalBalance), icon: CreditCard, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+    { label: 'New Users/Week', value: analytics.newUsersThisWeek, icon: UserPlus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-900/20' },
+    { label: 'Active Subs', value: analytics.activeSubscriptions, icon: CreditCard, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+    { label: 'Pending Tickets', value: analytics.pendingTickets, icon: Ticket, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+    { label: 'Revenue', value: formatCents(analytics.paidRevenue), icon: TrendingUp, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20' },
   ];
+
+  const vmStatuses = analytics.vmsByStatus || {};
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">Admin Dashboard</h1>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {cards.map(({ label, value, icon: Icon, color, bg }) => (
           <div key={label} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
@@ -43,6 +49,53 @@ export default function AdminDashboardPage() {
             <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
           </div>
         ))}
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-6 mb-8">
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">VM Status Breakdown</h2>
+          <div className="space-y-2">
+            {Object.entries(vmStatuses).length === 0 && <p className="text-sm text-slate-500">No VMs</p>}
+            {Object.entries(vmStatuses).map(([status, count]) => (
+              <div key={status} className="flex items-center justify-between py-1">
+                <span className="text-sm capitalize text-slate-600 dark:text-slate-400">{status}</span>
+                <span className="text-sm font-semibold text-slate-900 dark:text-white">{String(count)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Subscription Overview</h2>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between py-1">
+              <span className="text-sm text-slate-600 dark:text-slate-400">Total Subscriptions</span>
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">{analytics.subscriptions}</span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-sm text-slate-600 dark:text-slate-400">Active</span>
+              <span className="text-sm font-semibold text-green-600">{analytics.activeSubscriptions}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Financial Summary</h2>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between py-1">
+              <span className="text-sm text-slate-600 dark:text-slate-400">Wallet Balance</span>
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">{formatCents(analytics.totalWalletBalance)}</span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-sm text-slate-600 dark:text-slate-400">Paid Revenue</span>
+              <span className="text-sm font-semibold text-green-600">{formatCents(analytics.paidRevenue)}</span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-sm text-slate-600 dark:text-slate-400">Total Invoiced</span>
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">{formatCents(analytics.totalRevenue)}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -78,12 +131,12 @@ export default function AdminDashboardPage() {
                   <p className="text-sm font-medium text-slate-900 dark:text-white">{vm.name || `VM #${vm.vmid}`}</p>
                   <p className="text-xs text-slate-500">{vm.user?.email || 'unknown'} &middot; {vm.cpuCores}c / {vm.memoryMb}mb</p>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${
+                <span className={cn('text-xs px-2 py-1 rounded-full',
                   vm.status === 'running' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
                   vm.status === 'stopped' ? 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400' :
                   vm.status === 'provisioning' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' :
                   'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                }`}>
+                )}>
                   {vm.status}
                 </span>
               </div>

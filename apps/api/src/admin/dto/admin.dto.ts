@@ -80,6 +80,43 @@ export class UpdateNodeDto {
   isActive?: boolean;
 }
 
+export class AuditLogFilterDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  action?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  resource?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+}
+
+export class UpdateNodeStatusDto {
+  @IsString()
+  status!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  locationId?: string;
+}
+
 export class SetSettingDto {
   @ApiProperty()
   @IsString()

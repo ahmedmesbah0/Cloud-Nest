@@ -24,6 +24,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { BillingProfileModule } from './billing-profile/billing-profile.module';
 import { ResourcePackagesModule } from './resource-packages/resource-packages.module';
 import { ReferralsModule } from './referrals/referrals.module';
+import { LocationsModule } from './locations/locations.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -39,7 +40,7 @@ import { AppService } from './app.service';
         }],
       }),
     }),
-    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule],
+    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule, LocationsModule],
   controllers: [AppController],
   providers: [
     AppService,

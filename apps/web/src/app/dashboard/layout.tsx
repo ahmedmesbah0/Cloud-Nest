@@ -7,7 +7,7 @@ import { useTheme } from 'next-themes';
 import {
   Cloud, LayoutDashboard, Server, CreditCard, LifeBuoy,
   LogOut, Menu, X, Moon, Sun, ChevronDown, ChevronRight, Shield,
-  Users, Settings, FileText, UserCheck, HardDrive, Bell, Globe, Gift, BarChart3, MessageSquare,
+  Users, Settings, FileText, UserCheck, HardDrive, Bell, Globe, Gift, BarChart3, MessageSquare, MapPin,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -27,6 +27,7 @@ const adminNavItems = [
   { href: '/dashboard/admin/users', label: 'Users', icon: Users },
   { href: '/dashboard/admin/vms', label: 'VMs', icon: Server },
   { href: '/dashboard/admin/nodes', label: 'Nodes', icon: HardDrive },
+  { href: '/dashboard/admin/locations', label: 'Locations', icon: MapPin },
   { href: '/dashboard/admin/templates', label: 'Templates', icon: LayoutDashboard },
   { href: '/dashboard/admin/ip-pools', label: 'IP Pools', icon: Globe },
   { href: '/dashboard/admin/vouchers', label: 'Vouchers', icon: Gift },

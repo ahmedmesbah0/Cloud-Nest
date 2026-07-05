@@ -456,6 +456,10 @@ model Node {
   snapshots    Snapshot[]
   backups      Backup[]
   resourceMetrics ResourceMetric[]
+  location        Location?  @relation(fields: [locationId], references: [id])
+  locationId      String?
+  status          String     @default("unknown")
+  lastSeenAt      DateTime?
 }
 
 model NodeInventory {
@@ -701,6 +705,19 @@ model Setting {
   id    String @id @default(cuid())
   key   String @unique
   value String
+}
+
+model Location {
+  id         String   @id @default(cuid())
+  name       String
+  region     String
+  country    String
+  datacenter String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  nodes      Node[]
 }
 
 model IdempotencyKey {

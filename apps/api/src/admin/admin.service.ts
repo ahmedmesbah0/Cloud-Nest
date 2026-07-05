@@ -318,6 +318,54 @@ export class AdminService {
     return result;
   }
 
+  async updateNodeStatus(adminUserId: string, nodeId: string, data: { status: string; locationId?: string }) {
+    const node = await this.adminRepo.findNodeById(nodeId);
+    if (!node) throw new NotFoundException('Node not found');
+
+    const result = await this.prisma.$transaction(async (tx: any) => {
+      const r = await this.adminRepo.updateNode(nodeId, { status: data.status, lastSeenAt: new Date(), ...(data.locationId !== undefined ? { locationId: data.locationId } : {}) }, tx);
+      await tx.auditLog.create({
+        data: {
+          userId: adminUserId, action: 'admin.node.status',
+          resource: 'node', resourceId: nodeId,
+          metadata: { status: data.status, locationId: data.locationId } as any,
+        },
+      });
+      return r;
+    });
+
+    return result;
+  }
+
+  async getAnalytics() {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const [totalUsers, totalVms, activeVms, totalNodes, totalBalance, newUsersThisWeek,
+      vmsByStatus, subscriptions, activeSubscriptions, pendingTickets, totalRevenue, paidRevenue] = await Promise.all([
+      this.adminRepo.countUsers(),
+      this.adminRepo.countVms(),
+      this.adminRepo.countVmsByStatus('running'),
+      this.adminRepo.countNodes(),
+      this.adminRepo.aggregateWalletBalance(),
+      this.adminRepo.countUsersCreatedSince(weekAgo),
+      this.adminRepo.countVmsByStatusGroup(),
+      this.adminRepo.countSubscriptions(),
+      this.adminRepo.countActiveSubscriptions(),
+      this.adminRepo.countPendingTickets(),
+      this.adminRepo.sumInvoiceTotal(),
+      this.adminRepo.sumPaidInvoiceTotal(),
+    ]);
+
+    return {
+      totalUsers, totalVms, activeVms, totalNodes,
+      totalWalletBalance: totalBalance._sum.balance ?? 0,
+      newUsersThisWeek,
+      vmsByStatus,
+      subscriptions, activeSubscriptions, pendingTickets,
+      totalRevenue, paidRevenue,
+    };
+  }
+
   async getSettings() {
     const settings = await this.adminRepo.findSettings();
     const result: Record<string, string> = {};
@@ -365,11 +413,21 @@ export class AdminService {
     return { message: `Setting "${key}" deleted` };
   }
 
-  async getAuditLogs(page = 1, limit = 100) {
+  async getAuditLogs(page = 1, limit = 100, filters?: { action?: string; resource?: string; userId?: string; startDate?: string; endDate?: string }) {
     const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {};
+    if (filters?.action) where.action = { contains: filters.action };
+    if (filters?.resource) where.resource = filters.resource;
+    if (filters?.userId) where.userId = filters.userId;
+    if (filters?.startDate || filters?.endDate) {
+      const createdAt: Record<string, unknown> = {};
+      if (filters.startDate) createdAt.gte = new Date(filters.startDate);
+      if (filters.endDate) createdAt.lte = new Date(filters.endDate);
+      where.createdAt = createdAt;
+    }
     const [logs, total] = await Promise.all([
-      this.adminRepo.findAuditLogs(skip, limit),
-      this.adminRepo.countAuditLogs(),
+      this.adminRepo.findAuditLogs(skip, limit, where),
+      this.adminRepo.countAuditLogs(where),
     ]);
     return { logs, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
