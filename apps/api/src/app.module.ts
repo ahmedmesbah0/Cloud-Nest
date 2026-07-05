@@ -19,6 +19,11 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
 import { SshKeysModule } from './ssh-keys/ssh-keys.module';
 import { IpPoolModule } from './ip-pool/ip-pool.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { PlansModule } from './plans/plans.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { BillingProfileModule } from './billing-profile/billing-profile.module';
+import { ResourcePackagesModule } from './resource-packages/resource-packages.module';
+import { ReferralsModule } from './referrals/referrals.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -34,7 +39,7 @@ import { AppService } from './app.service';
         }],
       }),
     }),
-    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, IpPoolModule, MetricsModule],
+    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule],
   controllers: [AppController],
   providers: [
     AppService,
