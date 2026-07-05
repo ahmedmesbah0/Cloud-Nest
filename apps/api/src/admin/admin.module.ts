@@ -5,11 +5,13 @@ import { AdminService } from './admin.service';
 import { AdminRepository } from './admin.repository';
 import { AdminController } from './admin.controller';
 import { AdminGuard } from './admin.guard';
+import { AuthModule } from '../auth/auth.module';
 import { ProxmoxModule } from '../proxmox/proxmox.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 
 @Module({
   imports: [
+    AuthModule,
     ProxmoxModule,
     ResourcePoolModule,
     JwtModule.registerAsync({

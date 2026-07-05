@@ -404,6 +404,11 @@ export class AuthService {
     return this.authRepository.countNewUsersSince(since);
   }
 
+  async isAdmin(userId: string): Promise<boolean> {
+    const role = await this.authRepository.findAdminRole(userId);
+    return !!role;
+  }
+
   private parseExpiry(expiry: string): number {
     const match = expiry.match(/^(\d+)([smhd])$/);
     if (!match) return 7 * 24 * 60 * 60;

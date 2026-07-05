@@ -1,9 +1,9 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { AuthRepository } from '../auth/auth.repository';
+import { AuthService } from '../auth/auth.service';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
-  constructor(private readonly authRepository: AuthRepository) {}
+  constructor(private readonly authService: AuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -13,9 +13,9 @@ export class AdminGuard implements CanActivate {
       throw new ForbiddenException('Not authenticated');
     }
 
-    const userRole = await this.authRepository.findAdminRole(userId);
+    const admin = await this.authService.isAdmin(userId);
 
-    if (!userRole) {
+    if (!admin) {
       throw new ForbiddenException('Admin access required');
     }
 
