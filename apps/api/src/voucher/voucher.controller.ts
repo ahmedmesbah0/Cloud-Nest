@@ -18,7 +18,13 @@ export class VoucherController {
   @ApiOperation({ summary: 'Create a voucher (admin)' })
   async create(@Body() dto: CreateVoucherDto) {
     return this.voucherService.createVoucher({
+      rewardType: dto.rewardType,
       amount: dto.amount,
+      planId: dto.planId,
+      freePeriodDays: dto.freePeriodDays,
+      discountPercent: dto.discountPercent,
+      discountCredits: dto.discountCredits,
+      couponScope: dto.couponScope,
       maxRedemptions: dto.maxRedemptions,
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
       code: dto.code,

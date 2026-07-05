@@ -40,4 +40,22 @@ export class VoucherRepository {
   async createRedemption(data: { voucherId: string; userId: string }, tx?: PrismaTx) {
     return this.db(tx).voucherRedemption.create({ data });
   }
+
+  async findPlanById(planId: string, tx?: PrismaTx) {
+    return this.db(tx).plan.findUnique({ where: { id: planId } });
+  }
+
+  async createSubscription(data: {
+    userId: string;
+    planId: string;
+    status: string;
+    cpuCores: number;
+    memoryMb: number;
+    diskGb: number;
+    backupLimit: number;
+    snapshotLimit: number;
+    nextRenewalAt: Date;
+  }, tx?: PrismaTx) {
+    return this.db(tx).subscription.create({ data });
+  }
 }
