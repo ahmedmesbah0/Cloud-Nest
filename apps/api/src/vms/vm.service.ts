@@ -119,6 +119,30 @@ export class VmService {
     return vm;
   }
 
+  async updateVm(userId: string, vmId: string, dto: { name?: string }) {
+    await this.getVm(vmId, userId);
+
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) data.name = dto.name;
+
+    if (Object.keys(data).length === 0) return this.getVm(vmId, userId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.vmRepo.updateVm(vmId, data, tx);
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'update-vm',
+          resource: 'vm',
+          resourceId: vmId,
+          metadata: JSON.stringify(data),
+        },
+      });
+    });
+
+    return this.getVm(vmId, userId);
+  }
+
   async performAction(userId: string, vmId: string, action: 'start' | 'stop' | 'restart' | 'shutdown') {
     const vm = await this.getVm(vmId, userId);
 

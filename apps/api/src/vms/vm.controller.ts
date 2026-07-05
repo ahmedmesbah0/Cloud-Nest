@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -13,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VmService } from './vm.service';
-import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto, QemuHardwareDto, SetNetworkDto, SetDnsDto } from './dto/vm.dto';
+import { CreateVmDto, VmActionDto, ResizeVmDto, ReinstallVmDto, MountIsoDto, CreateBackupDto, CreateSnapshotDto, QemuHardwareDto, SetNetworkDto, SetDnsDto, UpdateVmDto } from './dto/vm.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
@@ -46,6 +47,12 @@ export class VmController {
   @ApiOperation({ summary: 'Get VM details' })
   async get(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.vmService.getVm(id, userId);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update VM details (name)' })
+  async update(@CurrentUser('id') userId: string, @Param('id') id: string, @Body() dto: UpdateVmDto) {
+    return this.vmService.updateVm(userId, id, dto);
   }
 
   @Post(':id/action')

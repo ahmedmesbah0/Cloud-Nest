@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { useState, useCallback, useEffect } from 'react';
 import api from '@/lib/api';
-import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu, Wifi, Globe, Users } from 'lucide-react';
+import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu, Wifi, Globe, Users, Pencil, Check, X, Shield, Plus } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -96,6 +96,22 @@ export default function VmDetailPage() {
   const [backupMode, setBackupMode] = useState<'snapshot' | 'suspend' | 'stop'>('snapshot');
 
   const [selectedTimeframe, setSelectedTimeframe] = useState<'hour' | 'day' | 'week' | 'month' | 'year'>('hour');
+  const [editingName, setEditingName] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [firewallRules, setFirewallRules] = useState<any[]>([]);
+  const [firewallLoading, setFirewallLoading] = useState(false);
+
+  const fetchFirewallRules = useCallback(async () => {
+    if (!vm) return;
+    setFirewallLoading(true);
+    try {
+      const res = await api.get(`/vms/${vm.id}/firewall`);
+      setFirewallRules(Array.isArray(res.data) ? res.data : []);
+    } catch { setFirewallRules([]); }
+    setFirewallLoading(false);
+  }, [vm]);
+
+  useEffect(() => { fetchFirewallRules(); }, [fetchFirewallRules]);
 
   useVmSocket(
     params.id as string,
@@ -458,7 +474,43 @@ export default function VmDetailPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{vm.name || `VM #${vm.vmid}`}</h1>
+          {editingName ? (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newName.trim()) { toast.error('Name is required'); return; }
+                try {
+                  await api.patch(`/vms/${vm.id}`, { name: newName });
+                  toast.success('VM renamed');
+                  setEditingName(false);
+                  mutate();
+                } catch (err: any) { toast.error(err.response?.data?.message || 'Rename failed'); }
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 text-xl font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary"
+                autoFocus
+                required
+              />
+              <button type="submit" className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"><Check className="h-4 w-4" /></button>
+              <button type="button" onClick={() => setEditingName(false)} className="p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"><X className="h-4 w-4" /></button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{vm.name || `VM #${vm.vmid}`}</h1>
+              <button
+                onClick={() => { setNewName(vm.name || ''); setEditingName(true); }}
+                className="p-1 text-slate-400 hover:text-primary rounded"
+                title="Rename VM"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <span className={cn('text-xs px-2 py-1 rounded-full mt-2 inline-block', statusColors[vm.status] || statusColors.error)}>
             {vm.status}
           </span>
@@ -868,6 +920,97 @@ export default function VmDetailPage() {
                 </button>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Firewall Rules */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+            <div className="flex items-center gap-2">
+              <Shield className="h-5 w-5" />
+              <span>Firewall Rules</span>
+            </div>
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchFirewallRules}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700"
+            >
+              <RefreshCw className="h-4 w-4" /> Refresh
+            </button>
+            <button
+              onClick={async () => {
+                const rule = prompt('Enter firewall rule\nExamples:\nIN ACCEPT -source 10.0.0.0/8\nIN DROP -source 0.0.0.0/0');
+                if (!rule) return;
+                try {
+                  await api.post(`/vms/${vm.id}/firewall`, { rule });
+                  toast.success('Firewall rule queued');
+                  setTimeout(fetchFirewallRules, 3000);
+                } catch (err: any) { toast.error(err.response?.data?.message || 'Failed to add rule'); }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Plus className="h-4 w-4" /> Add Rule
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-amber-600 dark:text-amber-400 mb-3">
+          Rules are applied via Proxmox firewall. The VM must be running for changes to take effect.
+        </p>
+        {firewallLoading ? (
+          <p className="text-sm text-slate-500">Loading rules...</p>
+        ) : firewallRules.length === 0 ? (
+          <p className="text-sm text-slate-500">No firewall rules. Add a rule to control network traffic to this VM.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="text-left py-2 text-slate-500 font-medium">#</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Type</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Action</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Source</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Dest</th>
+                  <th className="text-right py-2 text-slate-500 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {firewallRules.map((rule: any, i: number) => (
+                  <tr key={i} className="border-b border-slate-100 dark:border-slate-700 last:border-0">
+                    <td className="py-2 text-slate-500 font-mono text-xs">{rule.pos ?? rule.pos ?? i + 1}</td>
+                    <td className="py-2">
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full', rule.type === 'in' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'bg-purple-50 dark:bg-purple-900/20 text-purple-600')}>
+                        {rule.type || 'in'}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <span className={cn('text-xs font-medium', rule.action === 'ACCEPT' ? 'text-green-600' : rule.action === 'DROP' ? 'text-red-600' : 'text-amber-600')}>
+                        {rule.action || rule.default_action || '-'}
+                      </span>
+                    </td>
+                    <td className="py-2 text-slate-700 dark:text-slate-300 font-mono text-xs">{rule.source || '-'}</td>
+                    <td className="py-2 text-slate-700 dark:text-slate-300 font-mono text-xs">{rule.dest || '-'}</td>
+                    <td className="py-2 text-right">
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Delete this firewall rule?')) return;
+                          try {
+                            await api.delete(`/vms/${vm.id}/firewall/${rule.pos}`);
+                            toast.success('Firewall rule deleted');
+                            setTimeout(fetchFirewallRules, 3000);
+                          } catch (err: any) { toast.error(err.response?.data?.message || 'Delete failed'); }
+                        }}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

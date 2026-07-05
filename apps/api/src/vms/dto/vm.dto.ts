@@ -193,6 +193,32 @@ export class QemuHardwareDto {
   args?: string;
 }
 
+export class UpdateVmDto {
+  @ApiPropertyOptional({ description: 'New VM name' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'CPU cores' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  cpuCores?: number;
+
+  @ApiPropertyOptional({ description: 'Memory in MB' })
+  @IsOptional()
+  @IsInt()
+  @Min(512)
+  memoryMb?: number;
+
+  @ApiPropertyOptional({ description: 'Disk size in GB' })
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  diskGb?: number;
+}
+
 export class SetNetworkDto {
   @ApiProperty({ description: 'Network interface key (e.g. net0)' })
   @IsString()
