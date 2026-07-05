@@ -31,6 +31,8 @@ const adminNavItems = [
   { href: '/dashboard/admin/templates', label: 'Templates', icon: LayoutDashboard },
   { href: '/dashboard/admin/ip-pools', label: 'IP Pools', icon: Globe },
   { href: '/dashboard/admin/vouchers', label: 'Vouchers', icon: Gift },
+  { href: '/dashboard/admin/plans', label: 'Plans', icon: LayoutDashboard },
+  { href: '/dashboard/admin/resource-packages', label: 'Addons', icon: Gift },
   { href: '/dashboard/admin/billing', label: 'Billing', icon: CreditCard },
   { href: '/dashboard/admin/settings', label: 'Settings', icon: Settings },
   { href: '/dashboard/admin/audit-logs', label: 'Audit Logs', icon: FileText },
