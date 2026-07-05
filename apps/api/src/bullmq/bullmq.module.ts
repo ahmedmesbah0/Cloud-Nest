@@ -4,23 +4,15 @@ import { ConfigService } from '@nestjs/config';
 import { ProxmoxJobService } from './proxmox-job.service';
 import { IdempotencyKeyRepository } from './idempotency-key.repository';
 import { ProxmoxJobConsumer } from './proxmox-job.consumer';
-import { AuthModule } from '../auth/auth.module';
 import { VmModule } from '../vms/vm.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
-import { MailModule } from '../mail/mail.module';
-import { MetricsModule } from '../metrics/metrics.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { ReportJobConsumer } from '../billing/report-job.consumer';
-import { MetricsJobConsumer } from '../metrics/metrics-job.consumer';
 
 @Global()
 @Module({
   imports: [
-    AuthModule,
     forwardRef(() => VmModule),
     ResourcePoolModule,
-    MailModule,
-    MetricsModule,
     NotificationsModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
@@ -52,7 +44,7 @@ import { MetricsJobConsumer } from '../metrics/metrics-job.consumer';
       name: 'report-jobs',
     }),
   ],
-  providers: [ProxmoxJobService, IdempotencyKeyRepository, ProxmoxJobConsumer, ReportJobConsumer, MetricsJobConsumer],
+  providers: [ProxmoxJobService, IdempotencyKeyRepository, ProxmoxJobConsumer],
   exports: [BullModule, ProxmoxJobService],
 })
 export class BullmqModule {}

@@ -25,6 +25,6 @@ import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
   ],
   controllers: [AdminController],
   providers: [AdminService, AdminRepository, AdminGuard],
-  exports: [AdminService],
+  exports: [AdminService, AdminGuard],
 })
 export class AdminModule {}

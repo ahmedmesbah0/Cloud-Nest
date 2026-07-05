@@ -9,14 +9,18 @@ import { ProxmoxModule } from '../proxmox/proxmox.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 import { AuthModule } from '../auth/auth.module';
 import { VmModule } from '../vms/vm.module';
+import { AdminModule } from '../admin/admin.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
+    AdminModule,
     WalletModule,
     ProxmoxModule,
     ResourcePoolModule,
     AuthModule,
     VmModule,
+    MailModule,
   ],
   controllers: [BillingController],
   providers: [BillingService, BillingRepository, BillingJobConsumer, ReportJobConsumer],
