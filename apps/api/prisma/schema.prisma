@@ -71,6 +71,11 @@ model User {
   invoices         Invoice[]
   voucherRedemptions VoucherRedemption[]
   ticketMessages   SupportTicketMessage[]
+  subscriptions    Subscription[]
+  billingProfile  BillingProfile?
+  packagePurchases ResourcePackagePurchase[]
+  referralCode    ReferralCode?
+  referralUsages  ReferralUsage[]
 }
 
 model Role {
@@ -210,6 +215,12 @@ model VoucherCode {
   id            String   @id @default(cuid())
   code          String   @unique
   amount        Int
+  rewardType    String   @default("credits") // credits | plan_trial | plan_coupon
+  planId        String?
+  freePeriodDays Int?    // for plan_trial reward
+  discountPercent Int?   // for plan_coupon reward
+  discountCredits Int?   // for plan_coupon reward
+  couponScope   String?  // initial | renewal | both
   maxRedemptions Int?
   currentRedemptions Int @default(0)
   expiresAt     DateTime?
@@ -217,6 +228,205 @@ model VoucherCode {
   createdAt     DateTime @default(now())
 
   redemptions   VoucherRedemption[]
+}
+
+model PlanCategory {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  icon        String?
+  color       String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  plans       Plan[]
+}
+
+model Plan {
+  id                      String   @id @default(cuid())
+  categoryId              String?
+  name                    String
+  description             String?
+  priceCredits            Int
+  billingPeriodDays       Int      @default(30)
+  cpuCores                Int
+  memoryMb                Int
+  diskGb                  Int
+  backupLimit             Int      @default(0)
+  snapshotLimit           Int      @default(0)
+  serverLimit             Int      @default(1)
+  nodeIds                 Json?
+  templateId              String?
+  allowedUpgradePlanIds   Json?
+  allowedDowngradePlanIds Json?
+  extraChargePercent      Int      @default(0)
+  extraChargeName         String?
+  taxRatePercent          Int      @default(0)
+  minSubscriptionDays     Int      @default(0)
+  maxSubscriptions        Int?
+  enableCustomPricing     Boolean  @default(false)
+  cardBackgroundImage     String?
+  sliderConfig            Json?
+  isActive                Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  category                PlanCategory? @relation(fields: [categoryId], references: [id])
+  template                VmTemplate?   @relation(fields: [templateId], references: [id])
+  coupons                 PlanCoupon[]
+  subscriptions           Subscription[]
+}
+
+model PlanCoupon {
+  id                  String   @id @default(cuid())
+  planId              String
+  code                String   @unique
+  discountPercent     Int?
+  discountCredits     Int?
+  couponScope         String   @default("both")
+  maxUses             Int?     @default(1)
+  currentUses         Int      @default(0)
+  expiresAt           DateTime?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  plan                Plan     @relation(fields: [planId], references: [id])
+  subscriptions       Subscription[]
+}
+
+model Subscription {
+  id                        String    @id @default(cuid())
+  userId                    String
+  planId                    String
+  status                    String    @default("pending") // pending | active | suspended | cancelled | expired | grace_period
+  vmId                      String?   @unique
+
+  cpuCores                  Int
+  memoryMb                  Int
+  diskGb                    Int
+  backupLimit               Int       @default(0)
+  snapshotLimit             Int       @default(0)
+
+  nextRenewalAt             DateTime?
+  suspendedAt               DateTime?
+  graceStartedAt            DateTime?
+  cancelledAt               DateTime?
+
+  couponId                  String?
+  couponCode                String?
+  couponScope               String?
+  renewalDiscountPercent    Int?      @default(0)
+  renewalDiscountCredits    Int?      @default(0)
+
+  adminCreditsRefundedTotal Int?      @default(0)
+  adminRefundedAt           DateTime?
+
+  customResources           Json?
+
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  user                      User      @relation(fields: [userId], references: [id])
+  plan                      Plan      @relation(fields: [planId], references: [id])
+  vm                        Vm?       @relation(fields: [vmId], references: [id])
+  coupon                    PlanCoupon? @relation(fields: [couponId], references: [id])
+}
+
+model BillingProfile {
+  id            String @id @default(cuid())
+  userId        String @unique
+  fullName      String?
+  companyName   String?
+  addressLine1  String?
+  addressLine2  String?
+  city          String?
+  state         String?
+  postalCode    String?
+  countryCode   String? @db.VarChar(2)
+  vatId         String?
+  phone         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User    @relation(fields: [userId], references: [id])
+}
+
+model ResourcePackage {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  memoryLimit     Int
+  cpuLimit        Int
+  diskLimit       Int
+  serverLimit     Int      @default(1)
+  backupLimit     Int      @default(0)
+  snapshotLimit   Int      @default(0)
+  priceCredits    Int
+  isActive        Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  discountPercent Int?     @default(0)
+  discountStart   DateTime?
+  discountEnd     DateTime?
+  discountEnabled Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  purchases       ResourcePackagePurchase[]
+}
+
+model ResourcePackagePurchase {
+  id              String   @id @default(cuid())
+  userId          String
+  packageId       String
+  priceCredits    Int
+  memoryLimit     Int
+  cpuLimit        Int
+  diskLimit       Int
+  serverLimit     Int
+  backupLimit     Int
+  snapshotLimit   Int
+  createdAt       DateTime @default(now())
+
+  user            User              @relation(fields: [userId], references: [id])
+  package         ResourcePackage   @relation(fields: [packageId], references: [id])
+}
+
+model ReferralCode {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  code        String   @unique
+  uses        Int      @default(0)
+  maxUses     Int?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  user        User              @relation(fields: [userId], references: [id])
+  usage       ReferralUsage[]
+}
+
+model ReferralUsage {
+  id              String   @id @default(cuid())
+  codeId          String
+  referredUserId  String   @unique
+  rewardCredits   Int?
+  createdAt       DateTime @default(now())
+
+  code            ReferralCode @relation(fields: [codeId], references: [id])
+  referredUser    User        @relation(fields: [referredUserId], references: [id])
+
+  @@unique([codeId, referredUserId])
+}
+
+model CurrencySetting {
+  id        String @id @default(cuid())
+  code      String @unique @db.VarChar(3)
+  name      String
+  symbol    String
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
 }
 
 model VoucherRedemption {
@@ -354,6 +564,7 @@ model Vm {
   snapshots    Snapshot[]
   backups      Backup[]
   resourceMetrics ResourceMetric[]
+  subscription    Subscription?
 }
 
 model VmTemplate {
@@ -367,6 +578,7 @@ model VmTemplate {
   createdAt    DateTime @default(now())
 
   vms          Vm[]
+  plans         Plan[]
 }
 
 model ResourceMetric {
