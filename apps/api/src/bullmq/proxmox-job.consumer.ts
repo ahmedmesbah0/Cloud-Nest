@@ -7,6 +7,8 @@ import { VmService } from '../vms/vm.service';
 import { VmGateway } from '../vms/vm.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProxmoxJobService, ProxmoxJobData, ProxmoxJobType } from './proxmox-job.service';
+import { WalletService } from '../wallet/wallet.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 type VmStatus = 'running' | 'stopped' | 'suspended' | 'provisioning' | 'error' | 'deleted';
 
@@ -39,6 +41,8 @@ export class ProxmoxJobConsumer extends WorkerHost {
     private readonly vmGateway: VmGateway,
     private readonly jobService: ProxmoxJobService,
     private readonly notificationsService: NotificationsService,
+    private readonly walletService: WalletService,
+    private readonly prisma: PrismaService,
   ) {
     super();
   }
@@ -190,6 +194,10 @@ export class ProxmoxJobConsumer extends WorkerHost {
           this.logger.warn(`Failed to set error status on VM ${vmId} — record may not exist`);
         }
         this.vmGateway.emitVmStatusUpdate(vmId, 'error', { error: (error as Error).message });
+
+        if (type === 'create-vm' && userId) {
+          await this.autoRefundOnProvisionFailure(vmId, userId);
+        }
       }
 
       if (job.attemptsMade >= (job.opts?.attempts ?? 5) - 1) {
@@ -197,6 +205,26 @@ export class ProxmoxJobConsumer extends WorkerHost {
       }
 
       throw error;
+    }
+  }
+
+  private async autoRefundOnProvisionFailure(vmId: string, userId: string) {
+    try {
+      const vm = await this.prisma.vm.findUnique({
+        where: { id: vmId },
+        include: { subscription: { include: { plan: true } } },
+      });
+      if (!vm?.subscription?.plan) return;
+
+      const refundAmount = vm.subscription.plan.priceCredits;
+      await this.walletService.credit(userId, refundAmount, `refund:provision-fail:${vmId}`, {
+        vmId,
+        planId: vm.subscription.planId,
+        planName: vm.subscription.plan.name,
+      });
+      this.logger.log(`Auto-refunded ${refundAmount} cents to user ${userId} for failed VM provision (${vmId})`);
+    } catch (refundError) {
+      this.logger.error(`Auto-refund failed for user ${userId} VM ${vmId}: ${(refundError as Error).message}`);
     }
   }
 

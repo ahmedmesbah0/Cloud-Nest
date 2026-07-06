@@ -62,6 +62,9 @@ function setupConsumer() {
     create: jest.fn().mockResolvedValue({}),
   };
 
+  const mockWalletService = { credit: jest.fn().mockResolvedValue({}) };
+  const mockPrisma = { vm: { findUnique: jest.fn().mockResolvedValue(null) } };
+
   const consumer = new ProxmoxJobConsumer(
     mockProxmox as any,
     mockPoolService as any,
@@ -69,6 +72,8 @@ function setupConsumer() {
     mockVmGateway as any,
     mockJobService as any,
     mockNotificationsService as any,
+    mockWalletService as any,
+    mockPrisma as any,
   );
 
   return { consumer, mockProxmox, mockPoolService, mockVmService, mockVmGateway, mockJobService, mockNotificationsService };
