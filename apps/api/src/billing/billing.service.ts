@@ -5,6 +5,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const VM_PRICE_PER_CORE_HOUR = 50;
 const VM_PRICE_PER_GB_MEM_HOUR = 10;
@@ -23,6 +24,7 @@ export class BillingService {
     private readonly jobService: ProxmoxJobService,
     private readonly poolService: ResourcePoolService,
     private readonly proxmox: ProxmoxService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async runHourlyBilling(): Promise<{ billed: number; suspended: number; deleted: number }> {
@@ -151,6 +153,31 @@ export class BillingService {
     const vm = await this.billingRepo.findVmById(vmId);
     if (!vm) return;
 
+    if (vm.proxmoxId && vm.nodeId) {
+      const hourlyBucket = Math.floor(Date.now() / 3600000);
+      const idempotencyKey = `suspend-vm-${vm.id}-${hourlyBucket}`;
+
+      try {
+        const result = await this.jobService.enqueueJob('stop-vm', {
+          vmId: vm.id,
+          proxmoxId: vm.proxmoxId,
+          node: vm.nodeId,
+        }, {
+          userId: vm.userId,
+          idempotencyKey,
+          auditLog: { action: 'vm.stop.suspend', resource: 'vm', resourceId: vm.id },
+        });
+
+        if (result.skipped && result.status === 'failed') {
+          this.logger.warn(`Previous suspend-vm job for VM ${vm.id} failed (key=${idempotencyKey}), will retry next hour`);
+          return;
+        }
+      } catch (error) {
+        this.logger.error(`Failed to enqueue stop-vm job for VM ${vm.id}: ${(error as Error).message} — suspension deferred`);
+        return;
+      }
+    }
+
     await this.prisma.$transaction(async (tx: any) => {
       await this.billingRepo.updateVm(vmId, { status: 'suspended', suspendedAt: new Date() }, tx);
 
@@ -164,6 +191,16 @@ export class BillingService {
         },
       });
     });
+
+    try {
+      await this.notificationsService.create(
+        vm.userId,
+        'VM Suspended',
+        `Your VM "${vm.name}" has been suspended due to insufficient balance. Top up your wallet to resume it.`,
+      );
+    } catch (error) {
+      this.logger.error(`Failed to create suspension notification for VM ${vm.id}: ${(error as Error).message}`);
+    }
 
     this.logger.log(`VM ${vmId} suspended due to insufficient balance`);
   }

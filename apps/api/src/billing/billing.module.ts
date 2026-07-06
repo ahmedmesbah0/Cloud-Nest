@@ -12,6 +12,7 @@ import { VmModule } from '../vms/vm.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { AdminModule } from '../admin/admin.module';
 import { MailModule } from '../mail/mail.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { MailModule } from '../mail/mail.module';
     VmModule,
     SubscriptionsModule,
     MailModule,
+    NotificationsModule,
   ],
   controllers: [BillingController],
   providers: [BillingService, BillingRepository, BillingJobConsumer, ReportJobConsumer],

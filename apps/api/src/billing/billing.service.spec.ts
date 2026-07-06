@@ -6,12 +6,15 @@ import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('BillingService', () => {
   let service: BillingService;
   let mockRepo: any;
   let mockPrisma: any;
   let mockWalletService: any;
+  let mockJobService: any;
+  let mockNotificationsService: any;
 
   const store = {
     vms: new Map<string, any>(),
@@ -121,7 +124,7 @@ describe('BillingService', () => {
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 
-    const mockJobService = {
+    mockJobService = {
       enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }),
     };
 
@@ -133,6 +136,10 @@ describe('BillingService', () => {
       getVmStatus: jest.fn().mockResolvedValue({ status: 'running' }),
     };
 
+    mockNotificationsService = {
+      create: jest.fn().mockResolvedValue({ id: 'notif-1' }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BillingService,
@@ -142,6 +149,7 @@ describe('BillingService', () => {
         { provide: ProxmoxJobService, useValue: mockJobService },
         { provide: ResourcePoolService, useValue: mockPoolService },
         { provide: ProxmoxService, useValue: mockProxmoxService },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 
@@ -223,7 +231,7 @@ describe('BillingService', () => {
   });
 
   describe('enterGracePeriod', () => {
-    it('suspends VM, sets suspendedAt, and writes audit log', async () => {
+    it('sets VM to suspended and writes audit log for VM without proxmoxId', async () => {
       const now = new Date();
       store.vms.set('vm-1', {
         id: 'vm-1',
@@ -239,6 +247,127 @@ describe('BillingService', () => {
       expect(vm.status).toBe('suspended');
       expect(vm.suspendedAt).toBeDefined();
       expect(store.auditLogs.size).toBe(1);
+    });
+
+    it('enqueues stop-vm job for VMs with proxmoxId', async () => {
+      const now = new Date();
+      store.vms.set('vm-2', {
+        id: 'vm-2',
+        userId: 'user-1',
+        status: 'running',
+        cpuCores: 1, memoryMb: 1024, diskGb: 20,
+        proxmoxId: 102,
+        nodeId: 'node-1',
+        name: 'test-vm-2',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await service.enterGracePeriod('vm-2');
+
+      const vm = store.vms.get('vm-2');
+      expect(vm.status).toBe('suspended');
+      expect(mockJobService.enqueueJob).toHaveBeenCalledWith(
+        'stop-vm',
+        { vmId: 'vm-2', proxmoxId: 102, node: 'node-1' },
+        expect.objectContaining({
+          idempotencyKey: expect.stringContaining('suspend-vm-vm-2-'),
+          auditLog: { action: 'vm.stop.suspend', resource: 'vm', resourceId: 'vm-2' },
+        }),
+      );
+    });
+
+    it('does not advance DB state when enqueueJob throws', async () => {
+      const now = new Date();
+      store.vms.set('vm-3', {
+        id: 'vm-3',
+        userId: 'user-1',
+        status: 'running',
+        cpuCores: 1, memoryMb: 1024, diskGb: 20,
+        proxmoxId: 103,
+        nodeId: 'node-1',
+        name: 'test-vm-3',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      mockJobService.enqueueJob.mockRejectedValueOnce(new Error('Redis unreachable'));
+
+      await service.enterGracePeriod('vm-3');
+
+      const vm = store.vms.get('vm-3');
+      expect(vm.status).toBe('running');
+      expect(vm.suspendedAt).toBeUndefined();
+      expect(store.auditLogs.size).toBe(0);
+    });
+
+    it('does not advance DB state when enqueue returns skipped with status=failed', async () => {
+      const now = new Date();
+      store.vms.set('vm-4', {
+        id: 'vm-4',
+        userId: 'user-1',
+        status: 'running',
+        cpuCores: 1, memoryMb: 1024, diskGb: 20,
+        proxmoxId: 104,
+        nodeId: 'node-1',
+        name: 'test-vm-4',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      mockJobService.enqueueJob.mockResolvedValueOnce({ skipped: true, status: 'failed', idempotencyKey: 'suspend-vm-vm-4-12345' });
+
+      await service.enterGracePeriod('vm-4');
+
+      const vm = store.vms.get('vm-4');
+      expect(vm.status).toBe('running');
+      expect(store.auditLogs.size).toBe(0);
+    });
+
+    it('proceeds with suspension when enqueue is skipped with status=completed or pending', async () => {
+      const now = new Date();
+      store.vms.set('vm-5', {
+        id: 'vm-5',
+        userId: 'user-1',
+        status: 'running',
+        cpuCores: 1, memoryMb: 1024, diskGb: 20,
+        proxmoxId: 105,
+        nodeId: 'node-1',
+        name: 'test-vm-5',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      mockJobService.enqueueJob.mockResolvedValueOnce({ skipped: true, status: 'completed', idempotencyKey: 'suspend-vm-vm-5-12345' });
+
+      await service.enterGracePeriod('vm-5');
+
+      const vm = store.vms.get('vm-5');
+      expect(vm.status).toBe('suspended');
+      expect(store.auditLogs.size).toBe(1);
+    });
+
+    it('creates in-app notification after suspension', async () => {
+      const now = new Date();
+      store.vms.set('vm-6', {
+        id: 'vm-6',
+        userId: 'user-1',
+        status: 'running',
+        cpuCores: 1, memoryMb: 1024, diskGb: 20,
+        proxmoxId: 106,
+        nodeId: 'node-1',
+        name: 'SuspendedVM',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await service.enterGracePeriod('vm-6');
+
+      expect(mockNotificationsService.create).toHaveBeenCalledWith(
+        'user-1',
+        'VM Suspended',
+        expect.stringContaining('"SuspendedVM"'),
+      );
     });
   });
 
