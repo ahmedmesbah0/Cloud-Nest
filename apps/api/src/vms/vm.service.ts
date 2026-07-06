@@ -7,6 +7,8 @@ import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { WalletService } from '../wallet/wallet.service';
+import { calculateHourlyCost } from '../common/pricing.constants';
 
 @Injectable()
 export class VmService {
@@ -18,6 +20,7 @@ export class VmService {
     private readonly proxmox: ProxmoxService,
     private readonly subsService: SubscriptionsService,
     private readonly configService: ConfigService,
+    private readonly walletService: WalletService,
   ) {}
 
   async listTemplates() {
@@ -40,6 +43,14 @@ export class VmService {
     const activeSubCount = await this.subsService.countActiveByUser(userId);
     if (activeSubCount === 0) {
       throw new ForbiddenException('An active subscription is required to create servers');
+    }
+
+    const hourlyCost = calculateHourlyCost(dto.cpuCores, dto.memoryMb, dto.diskGb);
+    const balance = await this.walletService.getBalance(userId);
+    if (balance < hourlyCost) {
+      throw new BadRequestException(
+        `Insufficient balance: have ${balance} cents, need at least ${hourlyCost} cents (estimated hourly cost)`,
+      );
     }
 
     const pool = await this.vmRepo.findPoolById(dto.poolId);

@@ -8,9 +8,10 @@ import { JwtService } from '@nestjs/jwt';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { VmSubusersModule } from '../vm-subusers/vm-subusers.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
-  imports: [ResourcePoolModule, SubscriptionsModule, VmSubusersModule],
+  imports: [ResourcePoolModule, SubscriptionsModule, VmSubusersModule, WalletModule],
   controllers: [VmController],
   providers: [VmService, VmRepository, VmGateway, VncProxyGateway, JwtService],
   exports: [VmService, VmGateway],

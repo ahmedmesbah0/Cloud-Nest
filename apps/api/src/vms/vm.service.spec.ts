@@ -8,6 +8,7 @@ import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { ConfigService } from '@nestjs/config';
+import { WalletService } from '../wallet/wallet.service';
 
 describe('VmService', () => {
   let service: VmService;
@@ -18,6 +19,7 @@ describe('VmService', () => {
   let mockProxmoxService: any;
   let mockSubsService: any;
   let mockConfigService: any;
+  let mockWalletService: any;
 
   const store: Record<string, any> = {
     vms: new Map<string, any>(),
@@ -75,6 +77,11 @@ describe('VmService', () => {
 
     mockConfigService = {
       get: jest.fn().mockReturnValue('test-secret'),
+    };
+
+    mockWalletService = {
+      getBalance: jest.fn().mockResolvedValue(10000),
+      getOrCreateWallet: jest.fn().mockResolvedValue({ id: 'wallet-1', userId: 'user-1', balance: 10000 }),
     };
 
     mockProxmoxService = {
@@ -259,6 +266,7 @@ describe('VmService', () => {
         { provide: ProxmoxService, useValue: mockProxmoxService },
         { provide: SubscriptionsService, useValue: mockSubsService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: WalletService, useValue: mockWalletService },
       ],
     }).compile();
 
@@ -331,6 +339,46 @@ describe('VmService', () => {
         memoryMb: 1024,
         diskGb: 10,
       })).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects VM creation when wallet balance is below hourly cost', async () => {
+      const pool = addPool({ userId: 'user-1' });
+      const template = addTemplate({});
+      addNode();
+
+      mockWalletService.getBalance.mockResolvedValueOnce(50);
+
+      await expect(service.createVm('user-1', {
+        name: 'low-balance-vm',
+        poolId: pool.id,
+        templateId: template.id,
+        cpuCores: 2,
+        memoryMb: 4096,
+        diskGb: 50,
+      })).rejects.toThrow(BadRequestException);
+
+      expect(store.vms.size).toBe(0);
+      expect(mockPoolService.allocateResources).not.toHaveBeenCalled();
+    });
+
+    it('passes balance check when wallet has exactly the hourly cost', async () => {
+      const pool = addPool({ userId: 'user-1' });
+      const template = addTemplate({});
+      addNode();
+
+      mockWalletService.getBalance.mockResolvedValueOnce(240);
+
+      await service.createVm('user-1', {
+        name: 'exact-balance-vm',
+        poolId: pool.id,
+        templateId: template.id,
+        cpuCores: 2,
+        memoryMb: 4096,
+        diskGb: 50,
+      });
+
+      const vm = store.vms.get('vm-1');
+      expect(vm.status).toBe('provisioning');
     });
   });
 

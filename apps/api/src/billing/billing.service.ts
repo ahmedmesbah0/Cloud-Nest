@@ -6,10 +6,8 @@ import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { calculateHourlyCost } from '../common/pricing.constants';
 
-const VM_PRICE_PER_CORE_HOUR = 50;
-const VM_PRICE_PER_GB_MEM_HOUR = 10;
-const VM_PRICE_PER_GB_DISK_HOUR = 2;
 const GRACE_PERIOD_HOURS = 24;
 const DELETION_SCHEDULE_HOURS = 72;
 
@@ -63,7 +61,7 @@ export class BillingService {
     const vm = await this.billingRepo.findVmById(vmId);
     if (!vm || vm.status === 'provisioning') return;
 
-    const hourlyCost = this.calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
+    const hourlyCost = calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
 
     try {
       await this.walletService.debit(vm.userId, hourlyCost, `vm:${vmId}:hourly`, {
@@ -139,14 +137,6 @@ export class BillingService {
 
       return invoice;
     });
-  }
-
-  private calculateHourlyCost(cores: number, memoryMb: number, diskGb: number): number {
-    return (
-      cores * VM_PRICE_PER_CORE_HOUR +
-      Math.ceil(memoryMb / 1024) * VM_PRICE_PER_GB_MEM_HOUR +
-      diskGb * VM_PRICE_PER_GB_DISK_HOUR
-    );
   }
 
   async enterGracePeriod(vmId: string) {
@@ -281,7 +271,7 @@ export class BillingService {
     const vm = await this.billingRepo.findVmById(vmId);
     if (!vm) throw new Error('VM not found');
 
-    const hourly = this.calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
+    const hourly = calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
     return {
       hourlyCost: hourly,
       dailyCost: hourly * 24,
