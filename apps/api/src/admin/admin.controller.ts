@@ -69,7 +69,7 @@ export class AdminController {
   @Post('users/:id/credit')
   @ApiOperation({ summary: 'Manually credit user wallet' })
   async creditWallet(@CurrentUser('id') adminUserId: string, @Param('id') id: string, @Body() dto: CreditWalletDto) {
-    return this.adminService.creditUserWallet(adminUserId, id, dto.amount);
+    return this.adminService.creditUserWallet(adminUserId, id, dto.amount, dto.reason);
   }
 
   @Post('users/:id/roles/:role')

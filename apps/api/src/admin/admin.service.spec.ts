@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AdminService } from './admin.service';
 import { AdminRepository } from './admin.repository';
@@ -448,11 +448,19 @@ describe('AdminService', () => {
   });
 
   describe('creditUserWallet', () => {
-    it('credits wallet and writes audit log', async () => {
+    it('credits wallet and writes audit log with reason', async () => {
       store.users.set('u-1', { id: 'u-1', email: 'a@b.com' });
-      const wallet = await service.creditUserWallet('admin-1', 'u-1', 5000);
+      const wallet = await service.creditUserWallet('admin-1', 'u-1', 5000, 'Promotional credit');
       expect(wallet.balance).toBe(5000);
       expect(store.auditLogs.size).toBe(1);
+      const log = Array.from(store.auditLogs.values())[0];
+      expect((log as any).metadata.reason).toBe('Promotional credit');
+    });
+
+    it('rejects self-credit', async () => {
+      store.users.set('admin-1', { id: 'admin-1', email: 'admin@test.com' });
+      await expect(service.creditUserWallet('admin-1', 'admin-1', 5000, 'test'))
+        .rejects.toThrow(ForbiddenException);
     });
   });
 });

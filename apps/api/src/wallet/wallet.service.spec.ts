@@ -52,6 +52,12 @@ describe('WalletService', () => {
         if (data.balance?.decrement) w.balance -= data.balance.decrement;
         return w;
       }),
+      updateMany: jest.fn(async (where: any, data: any, _tx?: any) => {
+        const w = store.wallets.get(where.userId);
+        if (!w || w.balance < (where.balance?.gte ?? 0)) return { count: 0 };
+        if (data.balance?.decrement) w.balance -= data.balance.decrement;
+        return { count: 1 };
+      }),
       findTransactions: jest.fn(async (walletId: string, limit: number) => {
         return Array.from(store.transactions.values())
           .filter((t: any) => t.walletId === walletId)
@@ -135,6 +141,12 @@ describe('WalletService', () => {
     it('rejects debit exceeding balance', async () => {
       await service.credit('user-1', 100);
       await expect(service.debit('user-1', 200)).rejects.toThrow(BadRequestException);
+    });
+
+    it('prevents race-condition overdraft via atomic check-and-decrement', async () => {
+      const mockUpdateMany = mockRepo.updateMany as jest.Mock;
+      mockUpdateMany.mockResolvedValue({ count: 0 });
+      await expect(service.debit('user-1', 50)).rejects.toThrow(BadRequestException);
     });
   });
 

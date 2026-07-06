@@ -28,6 +28,10 @@ export class WalletRepository {
     return this.db(tx).wallet.update({ where: { userId }, data });
   }
 
+  async updateMany(where: any, data: any, tx?: PrismaTx) {
+    return this.db(tx).wallet.updateMany({ where, data });
+  }
+
   async findTransactions(walletId: string, limit: number, tx?: PrismaTx) {
     return this.db(tx).transaction.findMany({
       where: { walletId },

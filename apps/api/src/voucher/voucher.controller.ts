@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle, seconds } from '@nestjs/throttler';
 import { VoucherService } from './voucher.service';
 import { CreateVoucherDto, RedeemVoucherDto } from './dto/voucher.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -50,6 +51,7 @@ export class VoucherController {
   }
 
   @Post('redeem')
+  @Throttle({ default: { ttl: seconds(60), limit: 10 } })
   @ApiOperation({ summary: 'Redeem a voucher' })
   async redeem(@CurrentUser('id') userId: string, @Body() dto: RedeemVoucherDto) {
     return this.voucherService.redeemVoucher(userId, dto.code);

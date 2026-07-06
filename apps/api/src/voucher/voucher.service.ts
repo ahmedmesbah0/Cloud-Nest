@@ -26,7 +26,7 @@ export class VoucherService {
     expiresAt?: Date;
     code?: string;
   }) {
-    const code = data.code ?? randomBytes(4).toString('hex').toUpperCase();
+    const code = data.code ?? randomBytes(8).toString('hex').toUpperCase();
 
     const existing = await this.voucherRepo.findByCode(code);
     if (existing) throw new BadRequestException('Voucher code already exists');

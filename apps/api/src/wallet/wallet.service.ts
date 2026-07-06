@@ -104,13 +104,19 @@ export class WalletService {
         wallet = await this.walletRepo.create({ userId }, tx);
       }
 
-      if (wallet.balance < amount) {
+      const result = await this.walletRepo.updateMany(
+        { userId, balance: { gte: amount } },
+        { balance: { decrement: amount } },
+        tx,
+      );
+
+      if (result.count === 0) {
         throw new BadRequestException(
           `Insufficient balance: have ${wallet.balance} cents, need ${amount} cents`,
         );
       }
 
-      await this.walletRepo.update(userId, { balance: { decrement: amount } }, tx);
+      const updatedWallet = await this.walletRepo.findByUser(userId, false, tx);
 
       const txRecord = await this.walletRepo.createTransaction({
         walletId: wallet.id,
@@ -126,7 +132,7 @@ export class WalletService {
           action: 'wallet.debit',
           resource: 'wallet',
           resourceId: wallet.id,
-          metadata: { amount, reference, balanceAfter: (wallet.balance - amount) } as any,
+          metadata: { amount, reference, balanceAfter: updatedWallet.balance } as any,
         },
       });
 

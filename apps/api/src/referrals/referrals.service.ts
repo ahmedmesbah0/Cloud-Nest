@@ -58,7 +58,7 @@ export class ReferralsService {
     const existing = await this.repo.findCodeByUser(userId);
     if (existing) throw new BadRequestException('User already has a referral code');
 
-    const code = customCode ?? randomBytes(3).toString('hex').toUpperCase();
+    const code = customCode ?? randomBytes(6).toString('hex').toUpperCase();
 
     const codeExists = await this.repo.findCodeByString(code);
     if (codeExists) throw new BadRequestException('Referral code already taken');

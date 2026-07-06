@@ -432,7 +432,8 @@ export class AdminService {
     return { logs, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async creditUserWallet(adminUserId: string, userId: string, amount: number) {
+  async creditUserWallet(adminUserId: string, userId: string, amount: number, reason?: string) {
+    if (adminUserId === userId) throw new ForbiddenException('Cannot credit your own wallet');
     const user = await this.adminRepo.findUserBasic(userId);
     if (!user) throw new NotFoundException('User not found');
 
@@ -444,14 +445,14 @@ export class AdminService {
         tx,
       );
       await this.adminRepo.createTransaction(
-        { walletId: w.id, amount, type: 'credit', reference: 'admin:manual', metadata: { adminAction: true } } as Record<string, unknown>,
+        { walletId: w.id, amount, type: 'credit', reference: 'admin:manual', metadata: { adminAction: true, reason } } as Record<string, unknown>,
         tx,
       );
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.wallet.credit',
           resource: 'wallet', resourceId: w.id,
-          metadata: { targetUserId: userId, amount } as any,
+          metadata: { targetUserId: userId, amount, reason } as any,
         },
       });
       return w;

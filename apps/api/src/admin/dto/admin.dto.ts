@@ -37,6 +37,10 @@ export class CreditWalletDto {
   @IsInt()
   @Min(1)
   amount!: number;
+
+  @ApiProperty()
+  @IsString()
+  reason!: string;
 }
 
 export class CreateNodeDto {
