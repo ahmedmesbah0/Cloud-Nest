@@ -78,6 +78,34 @@ describe('VoucherService', () => {
       auditLog: {
         create: jest.fn(({ data }: any) => ({ id: `log-${Date.now()}`, ...data })),
       },
+      voucherCode: {
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          if (where.currentRedemptions?.lt !== undefined) {
+            const v = Array.from(store.vouchers.values()).find((v: any) => v.id === where.id);
+            if (!v || (v as any).currentRedemptions >= where.currentRedemptions.lt) {
+              return { count: 0 };
+            }
+          }
+          const v = store.vouchers.get(where.id);
+          if (v) {
+            for (const [key, val] of Object.entries(data)) {
+              if (typeof val === 'object' && val !== null && 'increment' in val) {
+                (v as any)[key] += (val as any).increment;
+              } else {
+                (v as any)[key] = val;
+              }
+            }
+          }
+          return { count: 1 };
+        }),
+      },
+      voucherRedemption: {
+        create: jest.fn(async (data: any) => {
+          const r = { id: `r-${store.redemptions.size + 1}`, ...data.data };
+          store.redemptions.set(r.id, r);
+          return r;
+        }),
+      },
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 

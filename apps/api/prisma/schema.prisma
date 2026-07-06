@@ -490,6 +490,8 @@ model VoucherRedemption {
 
   voucher VoucherCode @relation(fields: [voucherId], references: [id])
   user    User        @relation(fields: [userId], references: [id])
+
+  @@unique([voucherId, userId])
 }
 
 model Node {
