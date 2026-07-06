@@ -7,7 +7,7 @@ import api from '@/lib/api';
 import { ArrowLeft, Play, Square, RefreshCw, Terminal, Trash2, Maximize2, RotateCcw, Disc, Camera, HardDrive, Trash, Cpu, Wifi, Globe, Users, Pencil, Check, X, Shield, Plus } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { cn } from '@/lib/utils';
+import { cn, formatCents } from '@/lib/utils';
 import { useVmSocket } from '@/hooks/useVmSocket';
 import SuspendedOverlay from '@/components/suspended-overlay';
 import ConfirmDialog from '@/components/confirm-dialog';
@@ -98,6 +98,10 @@ export default function VmDetailPage() {
 
   const [reinstalling, setReinstalling] = useState(false);
   const [reinstallProgress, setReinstallProgress] = useState('');
+
+  const { data: addOns = [], mutate: mutateAddOns } = useSWR(`/vms/${params.id}/addons`, fetcher);
+  const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [purchaseType, setPurchaseType] = useState('');
 
   const [showCreateSnapshot, setShowCreateSnapshot] = useState(false);
   const [snapshotName, setSnapshotName] = useState('');
@@ -244,6 +248,26 @@ export default function VmDetailPage() {
 
   const handleDelete = async () => {
     setConfirmDelete(true);
+  };
+
+  const ADDON_ITEMS = [
+    { type: 'extra_disk', label: 'Extra Disk', price: 50, unit: 'GB' },
+    { type: 'extra_ip', label: 'Extra IP', price: 100, unit: 'address' },
+    { type: 'extra_backup_slots', label: 'Backup Slots', price: 200, unit: 'slot' },
+    { type: 'extra_snapshot_slots', label: 'Snapshot Slots', price: 150, unit: 'slot' },
+    { type: 'extra_bandwidth', label: 'Bandwidth', price: 300, unit: 'TB' },
+  ];
+
+  const executePurchase = async () => {
+    setPurchaseOpen(false);
+    try {
+      await api.post(`/vms/${vm.id}/addons`, { type: purchaseType, quantity: 1 });
+      toast.success('Add-on purchased');
+      mutateAddOns();
+      mutate();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Purchase failed');
+    }
   };
 
   const executeDelete = async () => {
@@ -809,6 +833,44 @@ export default function VmDetailPage() {
         ) : (
           <p className="text-slate-500 text-sm">No billing data yet.</p>
         )}
+      </div>
+
+      {/* Add-Ons */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 mb-6">
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Add-Ons</h2>
+        {addOns.length === 0 ? (
+          <p className="text-slate-500 text-sm mb-3">No add-ons purchased for this VM.</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {addOns.map((ao: any) => (
+              <div key={ao.id} className="flex justify-between py-1 text-sm">
+                <span className="text-slate-600 dark:text-slate-400">{ao.type.replace(/_/g, ' ')} x{ao.quantity}</span>
+                <span className="font-medium">{formatCents(ao.priceCredits)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-2">
+          {ADDON_ITEMS.map((item) => (
+            <button
+              key={item.type}
+              onClick={() => { setPurchaseType(item.type); setPurchaseOpen(true); }}
+              className="text-left p-3 rounded-lg border border-slate-200 dark:border-slate-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
+            >
+              <div className="text-sm font-medium text-slate-900 dark:text-white">{item.label}</div>
+              <div className="text-xs text-slate-500">{formatCents(item.price)} / {item.unit}</div>
+            </button>
+          ))}
+        </div>
+        <ConfirmDialog
+          open={purchaseOpen}
+          title="Purchase Add-On"
+          message={`Add ${purchaseType.replace(/_/g, ' ')} to this VM?`}
+          confirmLabel="Purchase"
+          variant="info"
+          onConfirm={executePurchase}
+          onCancel={() => setPurchaseOpen(false)}
+        />
       </div>
 
       {/* Backups */}
