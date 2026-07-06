@@ -30,6 +30,7 @@ import { LocationsModule } from './locations/locations.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 import { NotificationPreferencesModule } from './notification-preferences/notification-preferences.module';
 import { FeatureTogglesModule } from './feature-toggles/feature-toggles.module';
+import { VmAddonsModule } from './vm-addons/vm-addons.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
@@ -46,7 +47,7 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
         }],
       }),
     }),
-    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, PasskeysModule, OAuthModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule, LocationsModule, KnowledgeBaseModule, NotificationPreferencesModule, FeatureTogglesModule],
+    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, PasskeysModule, OAuthModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule, LocationsModule, KnowledgeBaseModule, NotificationPreferencesModule, FeatureTogglesModule, VmAddonsModule],
   controllers: [AppController],
   providers: [
     AppService,

@@ -61,6 +61,13 @@ export class VmRepository {
     });
   }
 
+  async findVmWithSubscription(id: string, tx?: PrismaTx) {
+    return this.db(tx).vm.findUnique({
+      where: { id },
+      include: { subscription: true },
+    });
+  }
+
   async findVmsByUser(userId: string, tx?: PrismaTx) {
     return this.db(tx).vm.findMany({
       where: { userId },

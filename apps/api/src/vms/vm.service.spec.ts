@@ -132,6 +132,11 @@ describe('VmService', () => {
       }),
       countVmsByUser: jest.fn(async (_userId: string) => store.vms.size),
       findVmById: jest.fn(async (id: string) => store.vms.get(id) ?? null),
+      findVmWithSubscription: jest.fn(async (id: string) => {
+        const vm = store.vms.get(id) ?? null;
+        if (vm) vm.subscription = { backupLimit: 5, snapshotLimit: 5 };
+        return vm;
+      }),
       findVmsByUser: jest.fn(async (userId: string) => {
         return Array.from(store.vms.values()).filter((v: any) => v.userId === userId);
       }),

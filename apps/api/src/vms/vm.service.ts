@@ -364,7 +364,9 @@ export class VmService {
     vmId: string,
     dto: { mode?: 'snapshot' | 'suspend' | 'stop'; storage?: string; compress?: 'lzo' | 'gzip' | 'zstd' },
   ) {
-    const vm = await this.getVm(vmId, userId);
+    const vm = await this.vmRepo.findVmWithSubscription(vmId);
+    if (!vm) throw new NotFoundException('VM not found');
+    if (vm.userId !== userId) throw new ForbiddenException('Not your VM');
     if (!vm.proxmoxId) throw new BadRequestException('VM has no Proxmox ID');
 
     const backup = await this.vmRepo.createBackup({
@@ -375,10 +377,10 @@ export class VmService {
       nodeId: vm.nodeId,
     });
 
-    // Retention/FIFO: if more than 5 backups exist, delete the oldest unlocked completed one
+    const backupLimit = vm.subscription?.backupLimit ?? 5;
+
     const existing = await this.vmRepo.findCompletedBackupsByVm(vm.id);
-    const MAX_BACKUPS = 5;
-    if (existing.length >= MAX_BACKUPS) {
+    if (existing.length >= backupLimit) {
       const unlocked = existing.filter((b: any) => !b.isLocked);
       if (unlocked.length > 0) {
         const toDelete = unlocked[0];

@@ -626,6 +626,27 @@ model Vm {
   resourceMetrics ResourceMetric[]
   subscription    Subscription?
   subusers        VmSubuser[]
+  addOns          VmAddOn[]
+}
+
+enum AddOnType {
+  extra_disk
+  extra_ip
+  extra_backup_slots
+  extra_snapshot_slots
+  extra_bandwidth
+}
+
+model VmAddOn {
+  id          String    @id @default(cuid())
+  vmId        String
+  type        AddOnType
+  quantity    Int       @default(1)
+  priceCredits Int
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  vm Vm @relation(fields: [vmId], references: [id])
 }
 
 model VmTemplate {
