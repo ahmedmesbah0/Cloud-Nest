@@ -8,12 +8,14 @@ import { AdminGuard } from './admin.guard';
 import { AuthModule } from '../auth/auth.module';
 import { ProxmoxModule } from '../proxmox/proxmox.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
     AuthModule,
     ProxmoxModule,
     ResourcePoolModule,
+    WalletModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

@@ -7,11 +7,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
+import { WalletService } from '../wallet/wallet.service';
 
 describe('AdminService', () => {
   let service: AdminService;
   let mockRepo: any;
   let mockPrisma: any;
+
+  let mockWalletService: any;
 
   const store = {
     users: new Map<string, any>(),
@@ -262,6 +265,18 @@ describe('AdminService', () => {
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 
+    mockWalletService = {
+      credit: jest.fn().mockResolvedValue({ id: 'tx-1', amount: 5000, type: 'credit' }),
+      getOrCreateWallet: jest.fn().mockImplementation(async (userId: string) => {
+        let w = store.wallets.get(userId);
+        if (!w) {
+          w = { id: `w-${userId}`, userId, balance: 5000 };
+          store.wallets.set(userId, w);
+        }
+        return w;
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
@@ -271,6 +286,7 @@ describe('AdminService', () => {
         { provide: ProxmoxJobService, useValue: { enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }) } },
         { provide: ResourcePoolService, useValue: { releaseResources: jest.fn().mockResolvedValue({ success: true }) } },
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('test-impersonation-token') } },
+        { provide: WalletService, useValue: mockWalletService },
       ],
     }).compile();
 
@@ -448,12 +464,16 @@ describe('AdminService', () => {
   });
 
   describe('creditUserWallet', () => {
-    it('credits wallet and writes audit log with reason', async () => {
+    it('credits wallet via WalletService and writes admin audit log', async () => {
       store.users.set('u-1', { id: 'u-1', email: 'a@b.com' });
       const wallet = await service.creditUserWallet('admin-1', 'u-1', 5000, 'Promotional credit');
+      expect(mockWalletService.credit).toHaveBeenCalledWith(
+        'u-1', 5000, 'admin:manual', { adminAction: true, reason: 'Promotional credit' },
+      );
       expect(wallet.balance).toBe(5000);
       expect(store.auditLogs.size).toBe(1);
       const log = Array.from(store.auditLogs.values())[0];
+      expect((log as any).action).toBe('admin.wallet.credit');
       expect((log as any).metadata.reason).toBe('Promotional credit');
     });
 

@@ -5,6 +5,7 @@ import { AdminRepository } from './admin.repository';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class AdminService {
@@ -15,6 +16,7 @@ export class AdminService {
     private readonly poolService: ResourcePoolService,
     private readonly jobService: ProxmoxJobService,
     private readonly jwtService: JwtService,
+    private readonly walletService: WalletService,
   ) {}
 
   async getDashboardStats() {
@@ -437,25 +439,18 @@ export class AdminService {
     const user = await this.adminRepo.findUserBasic(userId);
     if (!user) throw new NotFoundException('User not found');
 
-    const wallet = await this.prisma.$transaction(async (tx: any) => {
-      const w = await this.adminRepo.upsertWallet(
-        userId,
-        { userId, balance: amount } as Record<string, unknown>,
-        { balance: { increment: amount } } as Record<string, unknown>,
-        tx,
-      );
-      await this.adminRepo.createTransaction(
-        { walletId: w.id, amount, type: 'credit', reference: 'admin:manual', metadata: { adminAction: true, reason } } as Record<string, unknown>,
-        tx,
-      );
+    await this.walletService.credit(userId, amount, 'admin:manual', { adminAction: true, reason });
+
+    const wallet = await this.walletService.getOrCreateWallet(userId);
+
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.auditLog.create({
         data: {
           userId: adminUserId, action: 'admin.wallet.credit',
-          resource: 'wallet', resourceId: w.id,
+          resource: 'wallet', resourceId: wallet.id,
           metadata: { targetUserId: userId, amount, reason } as any,
         },
       });
-      return w;
     });
 
     return wallet;
