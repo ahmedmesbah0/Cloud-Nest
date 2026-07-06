@@ -121,4 +121,12 @@ export class SubscriptionsRepository {
   async findLastInvoice(userId: string, tx?: PrismaTx) {
     return this.db(tx).invoice.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } });
   }
+
+  async findTemplateById(id: string, tx?: PrismaTx) {
+    return this.db(tx).vmTemplate.findUnique({ where: { id } });
+  }
+
+  async updateVm(vmId: string, data: any, tx?: PrismaTx) {
+    return this.db(tx).vm.update({ where: { id: vmId }, data });
+  }
 }

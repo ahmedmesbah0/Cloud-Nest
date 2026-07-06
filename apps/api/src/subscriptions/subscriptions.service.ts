@@ -5,6 +5,7 @@ import { PlansService } from '../plans/plans.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
+import { ProxmoxService } from '../proxmox/proxmox.service';
 
 const GRACE_PERIOD_HOURS = 24;
 const DELETION_SCHEDULE_HOURS = 72;
@@ -20,6 +21,7 @@ export class SubscriptionsService {
     private readonly walletService: WalletService,
     private readonly poolService: ResourcePoolService,
     private readonly jobService: ProxmoxJobService,
+    private readonly proxmox: ProxmoxService,
   ) {}
 
   async subscribe(
@@ -60,7 +62,18 @@ export class SubscriptionsService {
       diskGb: dto.customDiskGb ?? plan.diskGb,
     };
 
-    return this.prisma.$transaction(async (tx: any) => {
+    const vmid = await this.proxmox.getNextVmid();
+
+    const defaultNode = await this.subsRepo.findFirstActiveNode();
+    if (!defaultNode) throw new BadRequestException('No active node available');
+
+    let template: any = null;
+    if (plan.templateId) {
+      template = await this.subsRepo.findTemplateById(plan.templateId);
+    }
+    const templateVmid = template ? Number(template.proxmoxTemplateId) : null;
+
+    const sub = await this.prisma.$transaction(async (tx: any) => {
       try {
         await this.walletService.debit(userId, effectivePrice, `subscription:${plan.id}`, {
           planName: plan.name,
@@ -72,14 +85,11 @@ export class SubscriptionsService {
         );
       }
 
-      const defaultNode = await this.subsRepo.findFirstActiveNode();
-      if (!defaultNode) throw new BadRequestException('No active node available');
-
       const vm = await this.subsRepo.createVm({
         userId,
         name: vmName,
         status: 'provisioning',
-        proxmoxId: null,
+        proxmoxId: vmid,
         nodeId: defaultNode.id,
         cpuCores: resources.cpuCores,
         memoryMb: resources.memoryMb,
@@ -182,8 +192,36 @@ export class SubscriptionsService {
 
       this.logger.log(`Subscription ${sub.id} created for user ${userId}, plan ${plan.name}`);
 
-      return sub;
+      return { subscription: sub, vm };
     });
+
+    const { subscription, vm: createdVm } = sub;
+
+    try {
+      if (templateVmid && createdVm) {
+        await this.jobService.enqueueJob('create-vm', {
+          vmId: createdVm.id,
+          vmid,
+          name: vmName,
+          cores: resources.cpuCores,
+          memory: resources.memoryMb,
+          disk: resources.diskGb,
+          templateVmid,
+          node: defaultNode.proxmoxNodeId,
+        }, {
+          userId,
+          idempotencyKey: `create-vm-${createdVm.id}`,
+          auditLog: { action: 'vm.provision', resource: 'vm', resourceId: createdVm.id },
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Failed to enqueue create-vm job: ${(error as Error).message}`);
+      if (createdVm) {
+        await this.subsRepo.updateVm(createdVm.id, { status: 'provisioning_failed' });
+      }
+    }
+
+    return subscription;
   }
 
   async getUserSubscriptions(userId: string) {
