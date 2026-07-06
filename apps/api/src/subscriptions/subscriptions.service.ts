@@ -254,8 +254,8 @@ export class SubscriptionsService {
     });
   }
 
-  async changePlan(id: string, userId: string, newPlanId: string, _couponCode?: string) {
-    const sub = await this.subsRepo.findSubscriptionById(id, { plan: true });
+  async changePlan(id: string, userId: string, newPlanId: string, options?: { couponCode?: string; confirmDowngrade?: boolean }) {
+    const sub = await this.subsRepo.findSubscriptionById(id, { plan: true, vm: true });
     if (!sub) throw new NotFoundException('Subscription not found');
     if (sub.userId !== userId) throw new ForbiddenException('Not your subscription');
 
@@ -279,6 +279,12 @@ export class SubscriptionsService {
       throw new BadRequestException('This plan does not allow downgrade to the specified plan');
     }
 
+    if (newPlan.diskGb < sub.diskGb && !options?.confirmDowngrade) {
+      throw new BadRequestException(
+        'Disk shrink requires confirmation. Set confirmDowngrade=true to acknowledge potential downtime.',
+      );
+    }
+
     const priceDiff = newPlan.priceCredits - (sub.plan as any)?.priceCredits;
 
     if (priceDiff > 0) {
@@ -292,8 +298,8 @@ export class SubscriptionsService {
       }
     }
 
-    return this.prisma.$transaction(async (tx: any) => {
-      const updated = await this.subsRepo.updateSubscription(id, {
+    const updated = await this.prisma.$transaction(async (tx: any) => {
+      const u = await this.subsRepo.updateSubscription(id, {
         planId: newPlanId,
         cpuCores: newPlan.cpuCores,
         memoryMb: newPlan.memoryMb,
@@ -308,12 +314,28 @@ export class SubscriptionsService {
           action: 'subscription.change-plan',
           resource: 'subscription',
           resourceId: id,
-          metadata: { oldPlanId: sub.planId, newPlanId, priceDiff },
+          metadata: { oldPlanId: sub.planId, newPlanId, priceDiff, diskShrink: newPlan.diskGb < sub.diskGb },
         },
       });
 
-      return updated;
+      return u;
     });
+
+    if (sub.vm?.proxmoxId) {
+      await this.jobService.enqueueJob('resize-vm', {
+        vmId: sub.vm.id,
+        proxmoxId: sub.vm.proxmoxId,
+        node: sub.vm.nodeId,
+        cores: newPlan.cpuCores,
+        memory: newPlan.memoryMb,
+        disk: newPlan.diskGb,
+      }, {
+        userId,
+        auditLog: { action: 'vm.resize.plan-change', resource: 'vm', resourceId: sub.vm.id },
+      });
+    }
+
+    return updated;
   }
 
   async renewSubscription(subId: string) {

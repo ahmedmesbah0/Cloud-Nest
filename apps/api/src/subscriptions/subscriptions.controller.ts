@@ -40,7 +40,10 @@ export class SubscriptionsController {
   @Post(':id/change-plan')
   @ApiOperation({ summary: 'Change subscription plan' })
   async changePlan(@CurrentUser('id') userId: string, @Param('id') id: string, @Body() dto: ChangePlanDto) {
-    return this.subsService.changePlan(id, userId, dto.newPlanId, dto.couponCode);
+    return this.subsService.changePlan(id, userId, dto.newPlanId, {
+      couponCode: dto.couponCode,
+      confirmDowngrade: dto.confirmDowngrade,
+    });
   }
 
   @Post('renew-all')

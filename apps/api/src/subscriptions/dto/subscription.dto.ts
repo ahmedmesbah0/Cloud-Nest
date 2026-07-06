@@ -49,6 +49,10 @@ export class ChangePlanDto {
   @IsOptional()
   @IsString()
   couponCode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  confirmDowngrade?: boolean;
 }
 
 export class CancelSubscriptionDto {
