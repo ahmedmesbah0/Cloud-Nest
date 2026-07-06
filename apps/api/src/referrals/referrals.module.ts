@@ -7,7 +7,7 @@ import { AdminModule } from '../admin/admin.module';
 import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
-  imports: [forwardRef(() => AuthModule), AdminModule, WalletModule],
+  imports: [forwardRef(() => AuthModule), forwardRef(() => AdminModule), WalletModule],
   controllers: [ReferralsController],
   providers: [ReferralsService, ReferralsRepository],
   exports: [ReferralsService],
