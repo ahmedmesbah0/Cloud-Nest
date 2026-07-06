@@ -5,6 +5,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { PrismaClientExceptionFilter } from './common/filters/prisma-client-exception.filter';
 
 loadEnv({
   path: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '.env.local')],
@@ -44,6 +45,7 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
   );
+  app.useGlobalFilters(new PrismaClientExceptionFilter(app.getHttpAdapter()));
 
   const config = new DocumentBuilder()
     .setTitle('CloudNest API')
