@@ -425,12 +425,205 @@ export class AdminRepository {
   }
 
   async sumInvoiceTotal(tx?: PrismaTx) {
-    const agg = await this.db(tx).invoice.aggregate({ _sum: { totalCents: true } });
-    return agg._sum.totalCents ?? 0;
+    const agg = await this.db(tx).invoice.aggregate({ _sum: { amount: true } });
+    return agg._sum.amount ?? 0;
   }
 
   async sumPaidInvoiceTotal(tx?: PrismaTx) {
-    const agg = await this.db(tx).invoice.aggregate({ where: { status: 'paid' }, _sum: { totalCents: true } });
-    return agg._sum.totalCents ?? 0;
+    const agg = await this.db(tx).invoice.aggregate({ where: { status: 'paid' }, _sum: { amount: true } });
+    return agg._sum.amount ?? 0;
+  }
+
+  // --- Transaction Ledger ---
+  async findAllTransactions(skip: number, take: number, where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).transaction.findMany({
+      skip, take,
+      where: where as any,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        wallet: { include: { user: { select: { id: true, email: true, name: true } } } },
+        invoice: { select: { id: true, status: true } },
+      },
+    });
+  }
+
+  async countAllTransactions(where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).transaction.count({ where: where as any });
+  }
+
+  async findUserWalletWithTransactions(userId: string, tx?: PrismaTx) {
+    return this.db(tx).wallet.findUnique({
+      where: { userId },
+      include: { transactions: { orderBy: { createdAt: 'desc' } } },
+    });
+  }
+
+  async findUserVms(userId: string, tx?: PrismaTx) {
+    return this.db(tx).vm.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: { subscription: { select: { id: true, planId: true, status: true } } },
+    });
+  }
+
+  async findUserReferralUsage(userId: string, tx?: PrismaTx) {
+    const referralCode = await this.db(tx).referralCode.findUnique({ where: { userId } });
+    if (!referralCode) return { code: null, usage: [] };
+    const usage = await this.db(tx).referralUsage.findMany({
+      where: { codeId: referralCode.id },
+      include: { referredUser: { select: { id: true, email: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { code: referralCode, usage };
+  }
+
+  async findUserAuditEvents(userId: string, actions: string[], tx?: PrismaTx) {
+    return this.db(tx).auditLog.findMany({
+      where: { userId, action: { in: actions } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  // --- Voucher / Redeem Code ---
+  async findVouchers(skip: number, take: number, where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.findMany({
+      skip, take,
+      where: where as any,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        redemptions: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
+    });
+  }
+
+  async countVouchers(where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.count({ where: where as any });
+  }
+
+  async createVoucher(data: Record<string, unknown>, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.create({ data });
+  }
+
+  async createManyVouchers(data: Array<Record<string, unknown>>, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.createMany({ data });
+  }
+
+  async updateVoucher(id: string, data: Record<string, unknown>, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.update({ where: { id }, data });
+  }
+
+  async findVoucherById(id: string, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.findUnique({
+      where: { id },
+      include: {
+        redemptions: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
+    });
+  }
+
+  async findVoucherByCode(code: string, tx?: PrismaTx) {
+    return this.db(tx).voucherCode.findUnique({
+      where: { code },
+      include: {
+        redemptions: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
+    });
+  }
+
+  async findVoucherRedemptionCount(voucherId: string, tx?: PrismaTx) {
+    return this.db(tx).voucherRedemption.count({ where: { voucherId } });
+  }
+
+  // --- Admin Credit Registry ---
+  async findAdminCreditLogs(skip: number, take: number, where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).auditLog.findMany({
+      skip, take,
+      where: { action: 'admin.wallet.credit', ...where } as any,
+      orderBy: { createdAt: 'desc' },
+      include: { user: { select: { id: true, email: true, name: true } } },
+    });
+  }
+
+  async countAdminCreditLogs(where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).auditLog.count({ where: { action: 'admin.wallet.credit', ...where } as any });
+  }
+
+  async aggregateAdminCreditsSince(date: Date, tx?: PrismaTx) {
+    const agg = await this.db(tx).transaction.aggregate({
+      where: { reference: 'admin:manual', createdAt: { gte: date } },
+      _sum: { amount: true },
+    });
+    return agg._sum.amount ?? 0;
+  }
+
+  async aggregateRedeemedSince(date: Date, tx?: PrismaTx) {
+    const agg = await this.db(tx).transaction.aggregate({
+      where: { reference: { startsWith: 'redeem:' }, createdAt: { gte: date } },
+      _sum: { amount: true },
+    });
+    return agg._sum.amount ?? 0;
+  }
+
+  // --- Referral Ledger ---
+  async findReferralUsageWithCode(skip: number, take: number, where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).referralUsage.findMany({
+      skip, take,
+      where: where as any,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        code: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+        referredUser: { select: { id: true, email: true, name: true } },
+      },
+    });
+  }
+
+  async countReferralUsage(where: Record<string, unknown> = {}, tx?: PrismaTx) {
+    return this.db(tx).referralUsage.count({ where: where as any });
+  }
+
+  async findReferralCodes(tx?: PrismaTx) {
+    return this.db(tx).referralCode.findMany({
+      include: { user: { select: { id: true, email: true, name: true } }, _count: { select: { usage: true } } },
+    });
+  }
+
+  async aggregateReferralCommissionPaid(tx?: PrismaTx) {
+    const agg = await this.db(tx).transaction.aggregate({
+      where: { reference: { startsWith: 'referral:' } },
+      _sum: { amount: true },
+    });
+    return agg._sum.amount ?? 0;
+  }
+
+  // --- Dashboard KPIs ---
+  async countVmsByStatusList(statuses: string[], tx?: PrismaTx) {
+    return this.db(tx).vm.count({ where: { status: { in: statuses } } });
+  }
+
+  async findSuspendedVmsOlderThan(date: Date, tx?: PrismaTx) {
+    return this.db(tx).vm.findMany({
+      where: { status: 'suspended', suspendedAt: { lte: date } },
+      include: { user: { select: { id: true, email: true, name: true } } },
+      orderBy: { suspendedAt: 'asc' },
+    });
+  }
+
+  async findUsersWithNearZeroBalance(minBalance: number, tx?: PrismaTx) {
+    return this.db(tx).wallet.findMany({
+      where: { balance: { lte: minBalance } },
+      include: {
+        user: { select: { id: true, email: true, name: true } },
+        _count: { select: { transactions: true } },
+      },
+    });
   }
 }

@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsOptional, IsBoolean, Min } from 'class-validator';
+import { IsString, IsInt, IsOptional, IsBoolean, Min, IsArray, IsDateString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class PaginationQueryDto {
@@ -160,4 +160,193 @@ export class AdminReplyTicketDto {
   @ApiProperty()
   @IsString()
   message!: string;
+}
+
+export class TransactionFilterDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reference?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  amountMin?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  amountMax?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  actor?: string;
+}
+
+export class CreateVoucherDto {
+  @ApiProperty()
+  @IsString()
+  code!: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  amount!: number;
+
+  @ApiPropertyOptional({ default: 'credits' })
+  @IsOptional()
+  @IsString()
+  rewardType?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  maxRedemptions?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class BatchCreateVoucherDto {
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  count!: number;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  amount!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  maxRedemptions?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class VoidVoucherDto {
+  @ApiProperty()
+  @IsString()
+  reason!: string;
+}
+
+export class VoucherFilterDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  amountMin?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  amountMax?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  createdBy?: string;
+}
+
+export class CreditFilterDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  adminId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  amountMin?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  amountMax?: number;
+}
+
+export class ReferralFilterDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
+export class DashboardKpiQueryDto {
+  @ApiPropertyOptional({ default: 7 })
+  @IsOptional()
+  @IsInt()
+  suspensionDays?: number;
 }

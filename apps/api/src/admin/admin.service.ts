@@ -456,9 +456,271 @@ export class AdminService {
     return wallet;
   }
 
-  async assignRole(adminUserId: string, userId: string, roleName: string) {
-    const user = await this.adminRepo.findUserBasic(userId);
+  // --- Billing Dashboard: Transaction Ledger ---
+
+  async listTransactions(filters: Record<string, unknown>, page = 1, limit = 50) {
+    const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {};
+
+    if (filters.type) where.type = filters.type;
+    if (filters.reference) where.reference = { contains: filters.reference };
+    if (filters.userId) where.wallet = { userId: filters.userId };
+    if (filters.startDate || filters.endDate) {
+      const createdAt: Record<string, unknown> = {};
+      if (filters.startDate) createdAt.gte = new Date(filters.startDate as string);
+      if (filters.endDate) createdAt.lte = new Date(filters.endDate as string);
+      where.createdAt = createdAt;
+    }
+    if (filters.amountMin) where.amount = { ...(where.amount as any || {}), gte: filters.amountMin };
+    if (filters.amountMax) where.amount = { ...(where.amount as any || {}), lte: filters.amountMax };
+
+    const [transactions, total] = await Promise.all([
+      this.adminRepo.findAllTransactions(skip, limit, where),
+      this.adminRepo.countAllTransactions(where),
+    ]);
+
+    return { transactions, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getUserBillingDetail(userId: string) {
+    const user = await this.adminRepo.findUserById(userId);
     if (!user) throw new NotFoundException('User not found');
+
+    const wallet = await this.adminRepo.findUserWalletWithTransactions(userId);
+    const vms = await this.adminRepo.findUserVms(userId);
+    const referral = await this.adminRepo.findUserReferralUsage(userId);
+    const billingActions = await this.adminRepo.findUserAuditEvents(userId, [
+      'vm.suspend', 'vm.resume', 'vm.create', 'vm.delete', 'vm.resize',
+      'admin.wallet.credit', 'wallet.credit', 'wallet.debit',
+    ]);
+
+    return { user, wallet, vms, referral, billingActions };
+  }
+
+  // --- Voucher / Redeem Code Management ---
+
+  async listVouchers(filters: Record<string, unknown>, page = 1, limit = 50) {
+    const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {};
+
+    if (filters.status === 'active') where.isActive = true;
+    else if (filters.status === 'inactive') where.isActive = false;
+    if (filters.startDate || filters.endDate) {
+      const createdAt: Record<string, unknown> = {};
+      if (filters.startDate) createdAt.gte = new Date(filters.startDate as string);
+      if (filters.endDate) createdAt.lte = new Date(filters.endDate as string);
+      where.createdAt = createdAt;
+    }
+
+    const [vouchers, total] = await Promise.all([
+      this.adminRepo.findVouchers(skip, limit, where),
+      this.adminRepo.countVouchers(where),
+    ]);
+
+    const mapped = vouchers.map((v: any) => ({
+      ...v,
+      usedCount: v.redemptions?.length ?? 0,
+      isExpired: v.expiresAt ? new Date(v.expiresAt) < new Date() : false,
+      redemptionStatus: v.redemptions?.length > 0 ? 'redeemed' : (v.expiresAt && new Date(v.expiresAt) < new Date() ? 'expired' : 'unused'),
+    }));
+
+    return { vouchers: mapped, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async createVoucher(adminUserId: string, data: { code: string; amount: number; rewardType?: string; maxRedemptions?: number; expiresAt?: string; note?: string }) {
+    const existing = await this.adminRepo.findVoucherByCode(data.code);
+    if (existing) throw new BadRequestException('Voucher code already exists');
+
+    const voucher = await this.prisma.$transaction(async (tx: any) => {
+      const v = await this.adminRepo.createVoucher({
+        code: data.code,
+        amount: data.amount,
+        rewardType: data.rewardType ?? 'credits',
+        maxRedemptions: data.maxRedemptions,
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+        isActive: true,
+        currentRedemptions: 0,
+      } as Record<string, unknown>, tx);
+
+      await tx.auditLog.create({
+        data: {
+          userId: adminUserId, action: 'admin.voucher.create',
+          resource: 'voucher', resourceId: v.id,
+          metadata: { code: data.code, amount: data.amount, note: data.note } as any,
+        },
+      });
+
+      return v;
+    });
+
+    return voucher;
+  }
+
+  async batchCreateVouchers(adminUserId: string, data: { count: number; amount: number; maxRedemptions?: number; expiresAt?: string; note?: string }) {
+    const { randomBytes } = await import('node:crypto');
+    const batch: Array<Record<string, unknown>> = [];
+
+    for (let i = 0; i < data.count; i++) {
+      const code = `BULK-${randomBytes(4).toString('hex').toUpperCase()}-${String(i + 1).padStart(3, '0')}`;
+      batch.push({
+        code, amount: data.amount,
+        rewardType: 'credits',
+        maxRedemptions: data.maxRedemptions,
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+        isActive: true, currentRedemptions: 0,
+      });
+    }
+
+    await this.adminRepo.createManyVouchers(batch);
+
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.auditLog.create({
+        data: {
+          userId: adminUserId, action: 'admin.voucher.batch-create',
+          resource: 'voucher',
+          metadata: { count: data.count, amount: data.amount, note: data.note } as any,
+        },
+      });
+    });
+
+    return { count: data.count, codes: batch.map((b) => b.code) };
+  }
+
+  async voidVoucher(adminUserId: string, voucherId: string, reason: string) {
+    const voucher = await this.adminRepo.findVoucherById(voucherId);
+    if (!voucher) throw new NotFoundException('Voucher not found');
+    if (!voucher.isActive) throw new BadRequestException('Voucher is already inactive');
+
+    await this.prisma.$transaction(async (tx: any) => {
+      await this.adminRepo.updateVoucher(voucherId, { isActive: false } as Record<string, unknown>, tx);
+      await tx.auditLog.create({
+        data: {
+          userId: adminUserId, action: 'admin.voucher.void',
+          resource: 'voucher', resourceId: voucherId,
+          metadata: { code: voucher.code, reason } as any,
+        },
+      });
+    });
+
+    return { message: 'Voucher voided' };
+  }
+
+  // --- Admin Credit Registry ---
+
+  async listAdminCredits(filters: Record<string, unknown>, page = 1, limit = 50) {
+    const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {};
+
+    if (filters.adminId) where.userId = filters.adminId;
+    if (filters.userId) where.metadata = { path: ['targetUserId'], string_contains: filters.userId };
+    if (filters.startDate || filters.endDate) {
+      const createdAt: Record<string, unknown> = {};
+      if (filters.startDate) createdAt.gte = new Date(filters.startDate as string);
+      if (filters.endDate) createdAt.lte = new Date(filters.endDate as string);
+      where.createdAt = createdAt;
+    }
+
+    const [logs, total] = await Promise.all([
+      this.adminRepo.findAdminCreditLogs(skip, limit, where),
+      this.adminRepo.countAdminCreditLogs(where),
+    ]);
+
+    return { credits: logs, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getAdminCreditStats() {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const weekStart = new Date(today); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    const [todayTotal, weekTotal, monthTotal] = await Promise.all([
+      this.adminRepo.aggregateAdminCreditsSince(today),
+      this.adminRepo.aggregateAdminCreditsSince(weekStart),
+      this.adminRepo.aggregateAdminCreditsSince(monthStart),
+    ]);
+
+    return { today: todayTotal, thisWeek: weekTotal, thisMonth: monthTotal };
+  }
+
+  // --- Referral Ledger ---
+
+  async listReferrals(filters: Record<string, unknown>, page = 1, limit = 50) {
+    const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {};
+    if (filters.startDate || filters.endDate) {
+      const createdAt: Record<string, unknown> = {};
+      if (filters.startDate) createdAt.gte = new Date(filters.startDate as string);
+      if (filters.endDate) createdAt.lte = new Date(filters.endDate as string);
+      where.createdAt = createdAt;
+    }
+
+    const [usage, total] = await Promise.all([
+      this.adminRepo.findReferralUsageWithCode(skip, limit, where),
+      this.adminRepo.countReferralUsage(where),
+    ]);
+
+    const codes = await this.adminRepo.findReferralCodes();
+    const commissionPaid = await this.adminRepo.aggregateReferralCommissionPaid();
+
+    return { usage, total, codes, commissionPaid, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // --- Dashboard KPIs & Alerts ---
+
+  async getBillingDashboardKpis(suspensionDays = 7) {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const suspensionThreshold = new Date(Date.now() - suspensionDays * 24 * 60 * 60 * 1000);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    const weeklyReport = await this.adminRepo.aggregateAdminCreditsSince(thirtyDaysAgo);
+    const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalBalance, activeVms, suspendedVms, graceVms,
+      totalVouchers, redeemedVouchers, unredeemedVouchers, expiredVouchers,
+      creditToday, creditThisMonth,
+      redeemedToday, redeemedThisMonth,
+      commissionPaid, pendingCommission,
+      usersAtRisk,
+      suspendedOld,
+      valueIssuedThisMonth,
+    ] = await Promise.all([
+      this.adminRepo.aggregateWalletBalance().then(r => r._sum.balance ?? 0),
+      this.adminRepo.countVmsByStatusList(['running', 'stopped']),
+      this.adminRepo.countVmsByStatus('suspended'),
+      this.adminRepo.countVmsByStatusList(['suspended']),
+      this.adminRepo.countVouchers(),
+      this.adminRepo.countVouchers({ redemptions: { some: {} } }),
+      this.adminRepo.countVouchers({ redemptions: { none: {} }, isActive: true, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }),
+      this.adminRepo.countVouchers({ isActive: false, redemptions: { none: {} } }),
+      this.adminRepo.aggregateAdminCreditsSince(today),
+      this.adminRepo.aggregateAdminCreditsSince(monthStart),
+      this.adminRepo.aggregateRedeemedSince(today),
+      this.adminRepo.aggregateRedeemedSince(monthStart),
+      this.adminRepo.aggregateReferralCommissionPaid(),
+      0,
+      this.adminRepo.findUsersWithNearZeroBalance(100),
+      this.adminRepo.findSuspendedVmsOlderThan(suspensionThreshold),
+      this.adminRepo.aggregateAdminCreditsSince(monthStart).then(r => r + (this.adminRepo.aggregateRedeemedSince(monthStart) as unknown as number)),
+    ]);
+
+    return {
+      kpis: {
+        totalWalletBalance: totalBalance,
+        activeVms, suspendedVms, vmsInGracePeriod: graceVms,
+        vouchers: { total: totalVouchers, redeemed: redeemedVouchers, unredeemed: unredeemedVouchers, expired: expiredVouchers },
+        adminCredits: { today: creditToday, thisMonth: creditThisMonth },
+        redeemed: { today: redeemedToday, thisMonth: redeemedThisMonth },
+        commissionPaid,
+        valueIssuedThisMonth,
+      },
+      alerts: {
+        suspendedVmsOld: suspendedOld,
+        usersAtRisk,
+      },
+    };
+  }
 
     await this.prisma.$transaction(async (tx: any) => {
       const role = await this.adminRepo.upsertRole(
