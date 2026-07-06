@@ -9,6 +9,8 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import { useVmSocket } from '@/hooks/useVmSocket';
+import SuspendedOverlay from '@/components/suspended-overlay';
+import ConfirmDialog from '@/components/confirm-dialog';
 
 type VmStatusUpdate = { vmId: string; status: string; ipAddress?: string };
 type UserNotification = { type: string; message: string };
@@ -51,6 +53,15 @@ export default function VmDetailPage() {
     { refreshInterval: 15000 },
   );
   const [actionVm, setActionVm] = useState(false);
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmBackupId, setConfirmBackupId] = useState<string | null>(null);
+  const [confirmRestoreBackupId, setConfirmRestoreBackupId] = useState<string | null>(null);
+  const [confirmRestoreBackupName, setConfirmRestoreBackupName] = useState('');
+  const [confirmSnapshotId, setConfirmSnapshotId] = useState<string | null>(null);
+  const [confirmRollbackSnapshotId, setConfirmRollbackSnapshotId] = useState<string | null>(null);
+  const [confirmRollbackSnapshotName, setConfirmRollbackSnapshotName] = useState('');
+  const [confirmReinstall, setConfirmReinstall] = useState(false);
 
   const [showResize, setShowResize] = useState(false);
   const [showReinstall, setShowReinstall] = useState(false);
@@ -232,7 +243,11 @@ export default function VmDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Delete this VM? This cannot be undone.')) return;
+    setConfirmDelete(true);
+  };
+
+  const executeDelete = async () => {
+    setConfirmDelete(false);
     setActionVm(true);
     try {
       await api.delete(`/vms/${vm.id}`);
@@ -274,7 +289,11 @@ export default function VmDetailPage() {
       toast.error('Please select a template');
       return;
     }
-    if (!confirm('Reinstall will wipe all data on this VM. Continue?')) return;
+    setConfirmReinstall(true);
+  };
+
+  const executeReinstall = async () => {
+    setConfirmReinstall(false);
     setShowReinstall(false);
     setReinstalling(true);
     setReinstallProgress('Queuing reinstall...');
@@ -352,7 +371,13 @@ export default function VmDetailPage() {
   };
 
   const handleDeleteBackup = async (backupId: string) => {
-    if (!confirm('Delete this backup?')) return;
+    setConfirmBackupId(backupId);
+  };
+
+  const executeDeleteBackup = async () => {
+    const backupId = confirmBackupId;
+    setConfirmBackupId(null);
+    if (!backupId) return;
     try {
       await api.delete(`/vms/${vm.id}/backups/${backupId}`);
       toast.success('Backup deleted');
@@ -363,7 +388,15 @@ export default function VmDetailPage() {
   };
 
   const handleRestoreBackup = async (backupId: string, name: string) => {
-    if (!confirm(`Restore VM from backup "${name}"? This will stop the VM and overwrite its disk.`)) return;
+    setConfirmRestoreBackupId(backupId);
+    setConfirmRestoreBackupName(name);
+  };
+
+  const executeRestoreBackup = async () => {
+    const backupId = confirmRestoreBackupId;
+    setConfirmRestoreBackupId(null);
+    setConfirmRestoreBackupName('');
+    if (!backupId) return;
     try {
       await api.post(`/vms/${vm.id}/backups/${backupId}/restore`);
       toast.success('Backup restore queued');
@@ -393,7 +426,13 @@ export default function VmDetailPage() {
   };
 
   const handleDeleteSnapshot = async (snapshotId: string) => {
-    if (!confirm('Delete this snapshot?')) return;
+    setConfirmSnapshotId(snapshotId);
+  };
+
+  const executeDeleteSnapshot = async () => {
+    const snapshotId = confirmSnapshotId;
+    setConfirmSnapshotId(null);
+    if (!snapshotId) return;
     try {
       await api.delete(`/vms/${vm.id}/snapshots/${snapshotId}`);
       toast.success('Snapshot deletion queued');
@@ -404,7 +443,15 @@ export default function VmDetailPage() {
   };
 
   const handleRollbackSnapshot = async (snapshotId: string, name: string) => {
-    if (!confirm(`Rollback VM to snapshot "${name}"? This will stop the VM and revert its disk.`)) return;
+    setConfirmRollbackSnapshotId(snapshotId);
+    setConfirmRollbackSnapshotName(name);
+  };
+
+  const executeRollbackSnapshot = async () => {
+    const snapshotId = confirmRollbackSnapshotId;
+    setConfirmRollbackSnapshotId(null);
+    setConfirmRollbackSnapshotName('');
+    if (!snapshotId) return;
     try {
       await api.post(`/vms/${vm.id}/snapshots/${snapshotId}/rollback`);
       toast.success('Snapshot rollback queued');
@@ -467,6 +514,7 @@ export default function VmDetailPage() {
   const maxNet = Math.max(...chartData.map((d: any) => Math.max(d.netin || 0, d.netout || 0)), 1);
 
   return (
+    <SuspendedOverlay isSuspended={vm.status === 'suspended'}>
     <div>
       <Link href="/dashboard/vms" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 mb-6">
         <ArrowLeft className="h-4 w-4" /> Back to VMs
@@ -1524,6 +1572,63 @@ export default function VmDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialogs */}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete VM"
+        message="Delete this VM? This cannot be undone. All data will be permanently lost."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={executeDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
+      <ConfirmDialog
+        open={confirmReinstall}
+        title="Reinstall VM"
+        message="Reinstall will wipe all data on this VM. Continue?"
+        confirmLabel="Reinstall"
+        variant="warning"
+        onConfirm={executeReinstall}
+        onCancel={() => setConfirmReinstall(false)}
+      />
+      <ConfirmDialog
+        open={confirmBackupId !== null}
+        title="Delete Backup"
+        message="Delete this backup? This cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={executeDeleteBackup}
+        onCancel={() => setConfirmBackupId(null)}
+      />
+      <ConfirmDialog
+        open={confirmRestoreBackupId !== null}
+        title="Restore Backup"
+        message={`Restore VM from backup "${confirmRestoreBackupName}"? This will stop the VM and overwrite its disk.`}
+        confirmLabel="Restore"
+        variant="warning"
+        onConfirm={executeRestoreBackup}
+        onCancel={() => { setConfirmRestoreBackupId(null); setConfirmRestoreBackupName(''); }}
+      />
+      <ConfirmDialog
+        open={confirmSnapshotId !== null}
+        title="Delete Snapshot"
+        message="Delete this snapshot? This cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={executeDeleteSnapshot}
+        onCancel={() => setConfirmSnapshotId(null)}
+      />
+      <ConfirmDialog
+        open={confirmRollbackSnapshotId !== null}
+        title="Rollback Snapshot"
+        message={`Rollback VM to snapshot "${confirmRollbackSnapshotName}"? This will stop the VM and revert its disk.`}
+        confirmLabel="Rollback"
+        variant="warning"
+        onConfirm={executeRollbackSnapshot}
+        onCancel={() => { setConfirmRollbackSnapshotId(null); setConfirmRollbackSnapshotName(''); }}
+      />
     </div>
+    </SuspendedOverlay>  // line 1579 end
   );
 }

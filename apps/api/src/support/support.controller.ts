@@ -32,7 +32,11 @@ export class SupportController {
 
   @Post(':id/messages')
   @ApiOperation({ summary: 'Reply to a support ticket' })
-  async reply(@CurrentUser('id') userId: string, @Param('id') id: string, @Body() dto: ReplyTicketDto) {
-    return this.supportService.reply(userId, id, dto.message);
+  async reply(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: ReplyTicketDto,
+  ) {
+    return this.supportService.reply(userId, id, dto.message, dto.isStaffOnly, dto.attachments);
   }
 }

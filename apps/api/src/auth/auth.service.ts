@@ -169,7 +169,13 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
-    return user;
+    const permissions: string[] = [];
+    for (const ur of user.roles) {
+      for (const rp of ur.role.permissions) {
+        permissions.push(`${rp.permission.action}:${rp.permission.resource}`);
+      }
+    }
+    return { ...user, permissions: [...new Set(permissions)] };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {

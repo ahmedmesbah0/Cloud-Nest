@@ -7,6 +7,7 @@ import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { ConfigService } from '@nestjs/config';
 
 describe('VmService', () => {
   let service: VmService;
@@ -16,6 +17,7 @@ describe('VmService', () => {
   let mockPoolService: any;
   let mockProxmoxService: any;
   let mockSubsService: any;
+  let mockConfigService: any;
 
   const store: Record<string, any> = {
     vms: new Map<string, any>(),
@@ -69,6 +71,10 @@ describe('VmService', () => {
 
     mockSubsService = {
       countActiveByUser: jest.fn().mockResolvedValue(1),
+    };
+
+    mockConfigService = {
+      get: jest.fn().mockReturnValue('test-secret'),
     };
 
     mockProxmoxService = {
@@ -247,6 +253,7 @@ describe('VmService', () => {
         { provide: ResourcePoolService, useValue: mockPoolService },
         { provide: ProxmoxService, useValue: mockProxmoxService },
         { provide: SubscriptionsService, useValue: mockSubsService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 

@@ -9,7 +9,7 @@ export class AppController {
 
   @Get()
   @ApiOperation({ summary: 'Health check' })
-  getHealth(): { status: string } {
+  async getHealth(): Promise<Record<string, any>> {
     return this.appService.getHealth();
   }
 }

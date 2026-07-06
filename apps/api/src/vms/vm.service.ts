@@ -1,4 +1,6 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { VmRepository } from './vm.repository';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
@@ -15,6 +17,7 @@ export class VmService {
     private readonly poolService: ResourcePoolService,
     private readonly proxmox: ProxmoxService,
     private readonly subsService: SubscriptionsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async listTemplates() {
@@ -372,17 +375,20 @@ export class VmService {
       nodeId: vm.nodeId,
     });
 
-    // Retention/FIFO: if more than 5 backups exist, delete the oldest completed one
+    // Retention/FIFO: if more than 5 backups exist, delete the oldest unlocked completed one
     const existing = await this.vmRepo.findCompletedBackupsByVm(vm.id);
     const MAX_BACKUPS = 5;
     if (existing.length >= MAX_BACKUPS) {
-      const toDelete = existing[0];
-      await this.prisma.$transaction(async (tx: any) => {
-        await this.vmRepo.updateBackup(toDelete.id, { status: 'failed' }, tx);
-        await tx.auditLog.create({
-          data: { userId, action: 'vm.backup.retention-evict', resource: 'backup', resourceId: toDelete.id, metadata: { vmId, reason: 'FIFO eviction' } },
+      const unlocked = existing.filter((b: any) => !b.isLocked);
+      if (unlocked.length > 0) {
+        const toDelete = unlocked[0];
+        await this.prisma.$transaction(async (tx: any) => {
+          await this.vmRepo.updateBackup(toDelete.id, { status: 'failed' }, tx);
+          await tx.auditLog.create({
+            data: { userId, action: 'vm.backup.retention-evict', resource: 'backup', resourceId: toDelete.id, metadata: { vmId, reason: 'FIFO eviction' } },
+          });
         });
-      });
+      }
     }
 
     await this.jobService.enqueueJob('backup-vm', {
@@ -452,6 +458,69 @@ export class VmService {
     });
 
     return { message: 'Backup restore queued' };
+  }
+
+  async lockBackup(userId: string, vmId: string, backupId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const backup = await this.vmRepo.findBackupById(backupId);
+    if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
+    if (backup.isLocked) throw new BadRequestException('Backup is already locked');
+    await this.prisma.$transaction(async (tx: any) => {
+      await this.vmRepo.updateBackup(backupId, { isLocked: true }, tx);
+      await tx.auditLog.create({
+        data: { userId, action: 'vm.backup.lock', resource: 'backup', resourceId: backupId, metadata: { vmId } },
+      });
+    });
+    return { message: 'Backup locked' };
+  }
+
+  async unlockBackup(userId: string, vmId: string, backupId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const backup = await this.vmRepo.findBackupById(backupId);
+    if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
+    if (!backup.isLocked) throw new BadRequestException('Backup is not locked');
+    await this.prisma.$transaction(async (tx: any) => {
+      await this.vmRepo.updateBackup(backupId, { isLocked: false }, tx);
+      await tx.auditLog.create({
+        data: { userId, action: 'vm.backup.unlock', resource: 'backup', resourceId: backupId, metadata: { vmId } },
+      });
+    });
+    return { message: 'Backup unlocked' };
+  }
+
+  async getBackupDownloadUrl(userId: string, vmId: string, backupId: string) {
+    const vm = await this.getVm(vmId, userId);
+    const backup = await this.vmRepo.findBackupById(backupId);
+    if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
+
+    const secret = this.configService.get<string>('JWT_ACCESS_SECRET', 'fallback-secret');
+    const expires = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+    const payload = `${backupId}:${expires}`;
+    const sig = createHmac('sha256', secret).update(payload).digest('hex');
+    const url = `/api/vms/${vm.id}/backups/${backupId}/download?expires=${expires}&sig=${sig}`;
+    return { url, expiresAt: new Date(expires * 1000).toISOString() };
+  }
+
+  async downloadBackup(userId: string, vmId: string, backupId: string, expires: string, sig: string) {
+    const secret = this.configService.get<string>('JWT_ACCESS_SECRET', 'fallback-secret');
+    const payload = `${backupId}:${expires}`;
+    const expectedSig = createHmac('sha256', secret).update(payload).digest('hex');
+    if (expectedSig !== sig) throw new BadRequestException('Invalid download token');
+    if (parseInt(expires, 10) < Math.floor(Date.now() / 1000)) throw new BadRequestException('Download link expired');
+
+    const vm = await this.getVm(vmId, userId);
+    const backup = await this.vmRepo.findBackupById(backupId);
+    if (!backup || backup.vmId !== vm.id) throw new NotFoundException('Backup not found');
+
+    if (backup.status !== 'completed') throw new BadRequestException('Backup not yet completed');
+
+    return {
+      volid: backup.volid,
+      storage: backup.storage,
+      nodeId: vm.nodeId,
+      filename: backup.name,
+      sizeMb: backup.sizeMb,
+    };
   }
 
   async listSnapshots(userId: string, vmId: string) {

@@ -201,6 +201,48 @@ export class VmController {
     return this.vmService.restoreBackup(userId, id, backupId);
   }
 
+  @Post(':id/backups/:backupId/lock')
+  @ApiOperation({ summary: 'Lock a backup (prevent FIFO eviction)' })
+  async lockBackup(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+  ) {
+    return this.vmService.lockBackup(userId, id, backupId);
+  }
+
+  @Post(':id/backups/:backupId/unlock')
+  @ApiOperation({ summary: 'Unlock a backup' })
+  async unlockBackup(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+  ) {
+    return this.vmService.unlockBackup(userId, id, backupId);
+  }
+
+  @Get(':id/backups/:backupId/download-url')
+  @ApiOperation({ summary: 'Get a short-lived signed download URL for a backup' })
+  async getDownloadUrl(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+  ) {
+    return this.vmService.getBackupDownloadUrl(userId, id, backupId);
+  }
+
+  @Get(':id/backups/:backupId/download')
+  @ApiOperation({ summary: 'Download a backup (validates signed URL)' })
+  async downloadBackup(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('backupId') backupId: string,
+    @Query('expires') expires: string,
+    @Query('sig') sig: string,
+  ) {
+    return this.vmService.downloadBackup(userId, id, backupId, expires, sig);
+  }
+
   // --- Snapshots ---
 
   @Get(':id/snapshots')

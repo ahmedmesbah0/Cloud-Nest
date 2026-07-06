@@ -4,9 +4,10 @@ import useSWR from 'swr';
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import api from '@/lib/api';
-import { Plus, Server, RefreshCw, Play, Square, Grid3X3, List, Search, ArrowUpDown, Cpu, HardDrive, Monitor, ExternalLink } from 'lucide-react';
+import { Plus, Server, RefreshCw, Play, Square, ArrowUpDown, Cpu, HardDrive, Monitor, ExternalLink, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
+import ViewToggle from '@/components/view-toggle';
 
 const fetcher = (url: string) => api.get(url).then((r) => r.data);
 
@@ -78,22 +79,7 @@ export default function VmsPage() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-            <button
-              onClick={() => setView('grid')}
-              className={cn('p-2', view === 'grid' ? 'bg-primary/10 text-primary' : 'text-slate-400 hover:text-foreground')}
-              title="Grid view"
-            >
-              <Grid3X3 className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setView('list')}
-              className={cn('p-2', view === 'list' ? 'bg-primary/10 text-primary' : 'text-slate-400 hover:text-foreground')}
-              title="List view"
-            >
-              <List className="h-4 w-4" />
-            </button>
-          </div>
+          <ViewToggle onToggle={(mode) => setView(mode)} />
           <div className="relative">
             <select
               value={sort}

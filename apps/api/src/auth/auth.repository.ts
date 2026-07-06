@@ -24,7 +24,22 @@ export class AuthRepository {
       where: { id },
       select: {
         id: true, email: true, name: true, emailVerified: true, totpEnabled: true,
-        roles: { select: { role: { select: { name: true } } } },
+        roles: {
+          select: {
+            role: {
+              select: {
+                name: true,
+                permissions: {
+                  select: {
+                    permission: {
+                      select: { action: true, resource: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
   }

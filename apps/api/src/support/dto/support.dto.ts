@@ -1,5 +1,5 @@
-import { IsString, MinLength, MaxLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsBoolean, IsOptional, IsArray, MinLength, MaxLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTicketDto {
   @ApiProperty()
@@ -21,4 +21,14 @@ export class ReplyTicketDto {
   @MinLength(1)
   @MaxLength(5000)
   message!: string;
+
+  @ApiPropertyOptional({ description: 'Internal staff-only note' })
+  @IsOptional()
+  @IsBoolean()
+  isStaffOnly?: boolean;
+
+  @ApiPropertyOptional({ description: 'File attachments' })
+  @IsOptional()
+  @IsArray()
+  attachments?: { filename: string; mimeType: string; size: number; path: string }[];
 }

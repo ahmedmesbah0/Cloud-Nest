@@ -17,6 +17,8 @@ import { SupportModule } from './support/support.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { SshKeysModule } from './ssh-keys/ssh-keys.module';
+import { PasskeysModule } from './passkeys/passkeys.module';
+import { OAuthModule } from './oauth/oauth.module';
 import { IpPoolModule } from './ip-pool/ip-pool.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { PlansModule } from './plans/plans.module';
@@ -25,8 +27,12 @@ import { BillingProfileModule } from './billing-profile/billing-profile.module';
 import { ResourcePackagesModule } from './resource-packages/resource-packages.module';
 import { ReferralsModule } from './referrals/referrals.module';
 import { LocationsModule } from './locations/locations.module';
+import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
+import { NotificationPreferencesModule } from './notification-preferences/notification-preferences.module';
+import { FeatureTogglesModule } from './feature-toggles/feature-toggles.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { PermissionsGuard } from './auth/guards/permissions.guard';
 
 @Module({
   imports: [
@@ -40,11 +46,12 @@ import { AppService } from './app.service';
         }],
       }),
     }),
-    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule, LocationsModule],
+    ConfigModule, PrismaModule, AuthModule, ProxmoxModule, BullmqModule, ResourcePoolModule, VmModule, WalletModule, VoucherModule, BillingModule, AdminModule, SupportModule, NotificationsModule, ApiKeysModule, SshKeysModule, PasskeysModule, OAuthModule, IpPoolModule, MetricsModule, PlansModule, SubscriptionsModule, BillingProfileModule, ResourcePackagesModule, ReferralsModule, LocationsModule, KnowledgeBaseModule, NotificationPreferencesModule, FeatureTogglesModule],
   controllers: [AppController],
   providers: [
     AppService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
 })
 export class AppModule {}

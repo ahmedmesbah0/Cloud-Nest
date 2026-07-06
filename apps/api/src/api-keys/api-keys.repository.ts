@@ -15,7 +15,15 @@ export class ApiKeysRepository {
     return this.db(tx).apiKey.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, key: true, lastUsedAt: true, createdAt: true },
+      select: {
+        id: true,
+        name: true,
+        key: true,
+        lastUsedAt: true,
+        allowedIps: true,
+        notifyForeignIp: true,
+        createdAt: true,
+      },
     });
   }
 
@@ -23,8 +31,30 @@ export class ApiKeysRepository {
     return this.db(tx).apiKey.findUnique({ where: { id } });
   }
 
-  async create(data: { userId: string; name: string; key: string }, tx?: PrismaTx) {
+  async findByKey(key: string, tx?: PrismaTx) {
+    return this.db(tx).apiKey.findUnique({ where: { key } });
+  }
+
+  async create(
+    data: { userId: string; name: string; key: string; allowedIps: string | null; notifyForeignIp: boolean },
+    tx?: PrismaTx,
+  ) {
     return this.db(tx).apiKey.create({ data });
+  }
+
+  async update(
+    id: string,
+    data: { allowedIps?: string | null; notifyForeignIp?: boolean },
+    tx?: PrismaTx,
+  ) {
+    return this.db(tx).apiKey.update({ where: { id }, data });
+  }
+
+  async updateLastUsed(id: string, tx?: PrismaTx) {
+    return this.db(tx).apiKey.update({
+      where: { id },
+      data: { lastUsedAt: new Date() },
+    });
   }
 
   async delete(id: string, tx?: PrismaTx) {

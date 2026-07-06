@@ -18,13 +18,22 @@ export class SupportRepository {
     });
   }
 
+  async findAllTickets(tx?: PrismaTx) {
+    return this.db(tx).supportTicket.findMany({
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
   async findTicketById(id: string, includeMessages = false, tx?: PrismaTx) {
     return this.db(tx).supportTicket.findUnique({
       where: { id },
       include: includeMessages
         ? {
             messages: {
-              include: { user: { select: { id: true, name: true, email: true } } },
+              include: {
+                user: { select: { id: true, name: true, email: true } },
+                attachments: true,
+              },
               orderBy: { createdAt: 'asc' },
             },
           }
@@ -52,9 +61,18 @@ export class SupportRepository {
   }
 
   async createMessage(
-    data: { ticketId: string; userId: string; body: string },
+    data: { ticketId: string; userId: string; body: string; isStaffOnly?: boolean },
     tx?: PrismaTx,
   ) {
     return this.db(tx).supportTicketMessage.create({ data });
+  }
+
+  async createAttachment(data: { messageId: string; filename: string; mimeType: string; size: number; path: string }, tx?: PrismaTx) {
+    return this.db(tx).ticketAttachment.create({ data });
+  }
+
+  async createAttachments(_messageId: string, attachments: { messageId: string; filename: string; mimeType: string; size: number; path: string }[], tx?: PrismaTx) {
+    if (attachments.length === 0) return [];
+    return this.db(tx).ticketAttachment.createMany({ data: attachments });
   }
 }

@@ -23,6 +23,7 @@
     "audit:fix": "npm audit fix"
   },
   "devDependencies": {
+    "@types/passport-http-bearer": "^1.0.42",
     "eslint-config-next": "^16.2.10",
     "typescript": "^5.7.0"
   },
@@ -30,10 +31,13 @@
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/platform-socket.io": "^11.1.27",
     "@nestjs/websockets": "^11.1.27",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
     "axios": "^1.18.1",
     "bullmq": "^5.79.2",
     "ioredis": "^5.11.1",
     "nodemailer": "^9.0.3",
+    "passport-http-bearer": "^1.0.1",
     "socket.io": "^4.8.3"
   }
 }

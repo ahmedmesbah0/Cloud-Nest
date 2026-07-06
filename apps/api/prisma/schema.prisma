@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
   engineType = "binary"
 }
 
@@ -46,42 +46,47 @@ enum TicketStatus {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  email          String    @unique
-  passwordHash   String
-  name           String?
-  emailVerified  Boolean   @default(false)
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  name             String?
+  emailVerified    Boolean  @default(false)
   emailVerifyToken String?
-  totpSecret     String?
-  totpEnabled    Boolean   @default(false)
-  isActive       Boolean   @default(true)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  totpSecret       String?
+  totpEnabled      Boolean  @default(false)
+  currentChallenge String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  roles            UserRole[]
-  sessions         Session[]
-  apiKeys          ApiKey[]
-  sshKeys          SshKey[]
-  wallet           Wallet?
-  resourcePools    ResourcePool[]
-  vms              Vm[]
-  notifications    Notification[]
-  supportTickets   SupportTicket[]
-  auditLogs        AuditLog[]
-  invoices         Invoice[]
-  voucherRedemptions VoucherRedemption[]
-  ticketMessages   SupportTicketMessage[]
-  subscriptions    Subscription[]
-  billingProfile  BillingProfile?
-  packagePurchases ResourcePackagePurchase[]
-  referralCode    ReferralCode?
-  referralUsages  ReferralUsage[]
-  vmSubusers      VmSubuser[]
+  roles                   UserRole[]
+  sessions                Session[]
+  apiKeys                 ApiKey[]
+  sshKeys                 SshKey[]
+  wallet                  Wallet?
+  resourcePools           ResourcePool[]
+  vms                     Vm[]
+  notifications           Notification[]
+  supportTickets          SupportTicket[]
+  auditLogs               AuditLog[]
+  invoices                Invoice[]
+  voucherRedemptions      VoucherRedemption[]
+  ticketMessages          SupportTicketMessage[]
+  subscriptions           Subscription[]
+  billingProfile          BillingProfile?
+  packagePurchases        ResourcePackagePurchase[]
+  referralCode            ReferralCode?
+  referralUsages          ReferralUsage[]
+  vmSubusers              VmSubuser[]
+  passkeys                Passkey[]
+  oauthClients                OAuthClient[]
+  oauthAuthorizationCodes      OAuthAuthorizationCode[]
+  notificationPreferences      NotificationPreference[]
 }
 
 model Role {
-  id          String       @id @default(cuid())
-  name        String       @unique
+  id          String  @id @default(cuid())
+  name        String  @unique
   description String?
 
   users       UserRole[]
@@ -89,11 +94,11 @@ model Role {
 }
 
 model Permission {
-  id          String @id @default(cuid())
-  action      String
-  resource    String
+  id       String @id @default(cuid())
+  action   String
+  resource String
 
-  roles       RolePermission[]
+  roles RolePermission[]
 }
 
 model RolePermission {
@@ -101,8 +106,8 @@ model RolePermission {
   roleId       String
   permissionId String
 
-  role         Role       @relation(fields: [roleId], references: [id])
-  permission   Permission @relation(fields: [permissionId], references: [id])
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
 
   @@unique([roleId, permissionId])
 }
@@ -112,8 +117,8 @@ model UserRole {
   userId String
   roleId String
 
-  user   User @relation(fields: [userId], references: [id])
-  role   Role @relation(fields: [roleId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+  role Role @relation(fields: [roleId], references: [id])
 
   @@unique([userId, roleId])
 }
@@ -125,80 +130,127 @@ model Session {
   expiresAt    DateTime
   createdAt    DateTime @default(now())
 
-  user         User     @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Passkey {
+  id           String   @id @default(cuid())
+  userId       String
+  credentialId String   @unique
+  publicKey    Bytes
+  counter      Int      @default(0)
+  transports   String?
+  deviceName   String
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model OAuthClient {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  logo         String?
+  redirectUris String[]
+  scopes       String   @default("read")
+  clientSecret String
+  createdAt    DateTime @default(now())
+
+  user               User                     @relation(fields: [userId], references: [id])
+  authorizationCodes OAuthAuthorizationCode[]
+}
+
+model OAuthAuthorizationCode {
+  id                  String   @id @default(cuid())
+  code                String   @unique
+  clientId            String
+  userId              String
+  scopes              String
+  redirectUri         String
+  codeChallenge       String?
+  codeChallengeMethod String?
+  expiresAt           DateTime
+  used                Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  client OAuthClient @relation(fields: [clientId], references: [id])
+  user   User        @relation(fields: [userId], references: [id])
 }
 
 model ApiKey {
-  id        String   @id @default(cuid())
-  userId    String
-  name      String
-  key       String   @unique
-  lastUsedAt DateTime?
-  createdAt DateTime @default(now())
+  id              String    @id @default(cuid())
+  userId          String
+  name            String
+  key             String    @unique
+  lastUsedAt      DateTime?
+  allowedIps      String?
+  notifyForeignIp Boolean   @default(true)
+  createdAt       DateTime  @default(now())
 
-  user      User     @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }
 
 model SshKey {
-  id        String   @id @default(cuid())
-  userId    String
-  name      String
-  publicKey String
-  createdAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  userId      String
+  name        String
+  publicKey   String
+  fingerprint String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
 
-  user      User     @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }
 
 model Wallet {
-  id         String   @id @default(cuid())
-  userId     String   @unique
-  balance    Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user       User     @relation(fields: [userId], references: [id])
+  user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]
 }
 
 model Transaction {
   id        String   @id @default(cuid())
   walletId  String
-  invoiceId String? @unique
+  invoiceId String?  @unique
   amount    Int
   type      String
   reference String?
   metadata  Json?
   createdAt DateTime @default(now())
 
-  wallet    Wallet   @relation(fields: [walletId], references: [id])
-  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
-
+  wallet  Wallet   @relation(fields: [walletId], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
 }
 
 model Invoice {
-  id              String   @id @default(cuid())
-  userId          String
-  amount          Int
-  status          String
-  dueDate         DateTime?
-  paidAt          DateTime?
-  createdAt       DateTime @default(now())
+  id        String    @id @default(cuid())
+  userId    String
+  amount    Int
+  status    String
+  dueDate   DateTime?
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
 
-  user            User     @relation(fields: [userId], references: [id])
-  lineItems       InvoiceLineItem[]
-  transaction     Transaction?
-  payments        Payment[]
+  user        User              @relation(fields: [userId], references: [id])
+  lineItems   InvoiceLineItem[]
+  transaction Transaction?
+  payments    Payment[]
 }
 
 model InvoiceLineItem {
-  id        String @id @default(cuid())
-  invoiceId String
+  id          String @id @default(cuid())
+  invoiceId   String
   description String
-  quantity  Int
-  unitPrice Int
-  total     Int
+  quantity    Int
+  unitPrice   Int
+  total       Int
 
-  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
 }
 
 model Payment {
@@ -209,26 +261,26 @@ model Payment {
   reference String?
   createdAt DateTime @default(now())
 
-  invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
 }
 
 model VoucherCode {
-  id            String   @id @default(cuid())
-  code          String   @unique
-  amount        Int
-  rewardType    String   @default("credits") // credits | plan_trial | plan_coupon
-  planId        String?
-  freePeriodDays Int?    // for plan_trial reward
-  discountPercent Int?   // for plan_coupon reward
-  discountCredits Int?   // for plan_coupon reward
-  couponScope   String?  // initial | renewal | both
-  maxRedemptions Int?
-  currentRedemptions Int @default(0)
-  expiresAt     DateTime?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  id                 String    @id @default(cuid())
+  code               String    @unique
+  amount             Int
+  rewardType         String    @default("credits") // credits | plan_trial | plan_coupon
+  planId             String?
+  freePeriodDays     Int? // for plan_trial reward
+  discountPercent    Int? // for plan_coupon reward
+  discountCredits    Int? // for plan_coupon reward
+  couponScope        String? // initial | renewal | both
+  maxRedemptions     Int?
+  currentRedemptions Int       @default(0)
+  expiresAt          DateTime?
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
 
-  redemptions   VoucherRedemption[]
+  redemptions VoucherRedemption[]
 }
 
 model PlanCategory {
@@ -242,7 +294,7 @@ model PlanCategory {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  plans       Plan[]
+  plans Plan[]
 }
 
 model Plan {
@@ -274,156 +326,156 @@ model Plan {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
-  category                PlanCategory? @relation(fields: [categoryId], references: [id])
-  template                VmTemplate?   @relation(fields: [templateId], references: [id])
-  coupons                 PlanCoupon[]
-  subscriptions           Subscription[]
+  category      PlanCategory?  @relation(fields: [categoryId], references: [id])
+  template      VmTemplate?    @relation(fields: [templateId], references: [id])
+  coupons       PlanCoupon[]
+  subscriptions Subscription[]
 }
 
 model PlanCoupon {
-  id                  String   @id @default(cuid())
-  planId              String
-  code                String   @unique
-  discountPercent     Int?
-  discountCredits     Int?
-  couponScope         String   @default("both")
-  maxUses             Int?     @default(1)
-  currentUses         Int      @default(0)
-  expiresAt           DateTime?
-  isActive            Boolean  @default(true)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id              String    @id @default(cuid())
+  planId          String
+  code            String    @unique
+  discountPercent Int?
+  discountCredits Int?
+  couponScope     String    @default("both")
+  maxUses         Int?      @default(1)
+  currentUses     Int       @default(0)
+  expiresAt       DateTime?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  plan                Plan     @relation(fields: [planId], references: [id])
-  subscriptions       Subscription[]
+  plan          Plan           @relation(fields: [planId], references: [id])
+  subscriptions Subscription[]
 }
 
 model Subscription {
-  id                        String    @id @default(cuid())
-  userId                    String
-  planId                    String
-  status                    String    @default("pending") // pending | active | suspended | cancelled | expired | grace_period
-  vmId                      String?   @unique
+  id     String  @id @default(cuid())
+  userId String
+  planId String
+  status String  @default("pending") // pending | active | suspended | cancelled | expired | grace_period
+  vmId   String? @unique
 
-  cpuCores                  Int
-  memoryMb                  Int
-  diskGb                    Int
-  backupLimit               Int       @default(0)
-  snapshotLimit             Int       @default(0)
+  cpuCores      Int
+  memoryMb      Int
+  diskGb        Int
+  backupLimit   Int @default(0)
+  snapshotLimit Int @default(0)
 
-  nextRenewalAt             DateTime?
-  suspendedAt               DateTime?
-  graceStartedAt            DateTime?
-  cancelledAt               DateTime?
+  nextRenewalAt  DateTime?
+  suspendedAt    DateTime?
+  graceStartedAt DateTime?
+  cancelledAt    DateTime?
 
-  couponId                  String?
-  couponCode                String?
-  couponScope               String?
-  renewalDiscountPercent    Int?      @default(0)
-  renewalDiscountCredits    Int?      @default(0)
+  couponId               String?
+  couponCode             String?
+  couponScope            String?
+  renewalDiscountPercent Int?    @default(0)
+  renewalDiscountCredits Int?    @default(0)
 
   adminCreditsRefundedTotal Int?      @default(0)
   adminRefundedAt           DateTime?
 
-  customResources           Json?
+  customResources Json?
 
-  createdAt                 DateTime  @default(now())
-  updatedAt                 DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user                      User      @relation(fields: [userId], references: [id])
-  plan                      Plan      @relation(fields: [planId], references: [id])
-  vm                        Vm?       @relation(fields: [vmId], references: [id])
-  coupon                    PlanCoupon? @relation(fields: [couponId], references: [id])
+  user   User        @relation(fields: [userId], references: [id])
+  plan   Plan        @relation(fields: [planId], references: [id])
+  vm     Vm?         @relation(fields: [vmId], references: [id])
+  coupon PlanCoupon? @relation(fields: [couponId], references: [id])
 }
 
 model BillingProfile {
-  id            String @id @default(cuid())
-  userId        String @unique
-  fullName      String?
-  companyName   String?
-  addressLine1  String?
-  addressLine2  String?
-  city          String?
-  state         String?
-  postalCode    String?
-  countryCode   String? @db.VarChar(2)
-  vatId         String?
-  phone         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  fullName     String?
+  companyName  String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  countryCode  String?  @db.VarChar(2)
+  vatId        String?
+  phone        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  user          User    @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }
 
 model ResourcePackage {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   name            String
   description     String?
   memoryLimit     Int
   cpuLimit        Int
   diskLimit       Int
-  serverLimit     Int      @default(1)
-  backupLimit     Int      @default(0)
-  snapshotLimit   Int      @default(0)
+  serverLimit     Int       @default(1)
+  backupLimit     Int       @default(0)
+  snapshotLimit   Int       @default(0)
   priceCredits    Int
-  isActive        Boolean  @default(true)
-  sortOrder       Int      @default(0)
-  discountPercent Int?     @default(0)
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+  discountPercent Int?      @default(0)
   discountStart   DateTime?
   discountEnd     DateTime?
-  discountEnabled Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  discountEnabled Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  purchases       ResourcePackagePurchase[]
+  purchases ResourcePackagePurchase[]
 }
 
 model ResourcePackagePurchase {
-  id              String   @id @default(cuid())
-  userId          String
-  packageId       String
-  priceCredits    Int
-  memoryLimit     Int
-  cpuLimit        Int
-  diskLimit       Int
-  serverLimit     Int
-  backupLimit     Int
-  snapshotLimit   Int
-  createdAt       DateTime @default(now())
+  id            String   @id @default(cuid())
+  userId        String
+  packageId     String
+  priceCredits  Int
+  memoryLimit   Int
+  cpuLimit      Int
+  diskLimit     Int
+  serverLimit   Int
+  backupLimit   Int
+  snapshotLimit Int
+  createdAt     DateTime @default(now())
 
-  user            User              @relation(fields: [userId], references: [id])
-  package         ResourcePackage   @relation(fields: [packageId], references: [id])
+  user    User            @relation(fields: [userId], references: [id])
+  package ResourcePackage @relation(fields: [packageId], references: [id])
 }
 
 model ReferralCode {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  code        String   @unique
-  uses        Int      @default(0)
-  maxUses     Int?
-  expiresAt   DateTime?
-  createdAt   DateTime @default(now())
+  id        String    @id @default(cuid())
+  userId    String    @unique
+  code      String    @unique
+  uses      Int       @default(0)
+  maxUses   Int?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
 
-  user        User              @relation(fields: [userId], references: [id])
-  usage       ReferralUsage[]
+  user  User            @relation(fields: [userId], references: [id])
+  usage ReferralUsage[]
 }
 
 model ReferralUsage {
-  id              String   @id @default(cuid())
-  codeId          String
-  referredUserId  String   @unique
-  rewardCredits   Int?
-  createdAt       DateTime @default(now())
+  id             String   @id @default(cuid())
+  codeId         String
+  referredUserId String   @unique
+  rewardCredits  Int?
+  createdAt      DateTime @default(now())
 
-  code            ReferralCode @relation(fields: [codeId], references: [id])
-  referredUser    User        @relation(fields: [referredUserId], references: [id])
+  code         ReferralCode @relation(fields: [codeId], references: [id])
+  referredUser User         @relation(fields: [referredUserId], references: [id])
 
   @@unique([codeId, referredUserId])
 }
 
 model CurrencySetting {
-  id        String @id @default(cuid())
-  code      String @unique @db.VarChar(3)
+  id        String  @id @default(cuid())
+  code      String  @unique @db.VarChar(3)
   name      String
   symbol    String
   isDefault Boolean @default(false)
@@ -431,66 +483,67 @@ model CurrencySetting {
 }
 
 model VoucherRedemption {
-  id         String   @id @default(cuid())
-  voucherId  String
-  userId     String
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  voucherId String
+  userId    String
+  createdAt DateTime @default(now())
 
-  voucher    VoucherCode @relation(fields: [voucherId], references: [id])
-  user       User        @relation(fields: [userId], references: [id])
+  voucher VoucherCode @relation(fields: [voucherId], references: [id])
+  user    User        @relation(fields: [userId], references: [id])
 }
 
 model Node {
-  id        String @id @default(cuid())
-  proxmoxNodeId String @unique
-  name      String
-  host      String
-  port      Int    @default(8006)
-  isActive  Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String    @id @default(cuid())
+  proxmoxNodeId   String    @unique
+  name            String
+  host            String
+  port            Int       @default(8006)
+  isActive        Boolean   @default(true)
+  maintenanceMode Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  inventory    NodeInventory?
-  vms          Vm[]
-  storagePools StoragePool[]
-  snapshots    Snapshot[]
-  backups      Backup[]
+  inventory       NodeInventory?
+  vms             Vm[]
+  storagePools    StoragePool[]
+  snapshots       Snapshot[]
+  backups         Backup[]
   resourceMetrics ResourceMetric[]
-  location        Location?  @relation(fields: [locationId], references: [id])
+  location        Location?        @relation(fields: [locationId], references: [id])
   locationId      String?
-  status          String     @default("unknown")
+  status          String           @default("unknown")
   lastSeenAt      DateTime?
 }
 
 model NodeInventory {
-  id         String @id @default(cuid())
-  nodeId     String @unique
-  totalCores Int
-  usedCores  Int    @default(0)
+  id            String   @id @default(cuid())
+  nodeId        String   @unique
+  totalCores    Int
+  usedCores     Int      @default(0)
   totalMemoryMb Int
-  usedMemoryMb  Int    @default(0)
+  usedMemoryMb  Int      @default(0)
   totalDiskGb   Int
-  usedDiskGb    Int    @default(0)
-  updatedAt  DateTime @updatedAt
+  usedDiskGb    Int      @default(0)
+  updatedAt     DateTime @updatedAt
 
-  node       Node   @relation(fields: [nodeId], references: [id])
+  node Node @relation(fields: [nodeId], references: [id])
 }
 
 model StoragePool {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   nodeId    String
   name      String
   type      String
   totalGb   Int
-  usedGb    Int    @default(0)
+  usedGb    Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  node      Node   @relation(fields: [nodeId], references: [id])
+  node Node @relation(fields: [nodeId], references: [id])
 }
 
 model IpPool {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
   subnet    String
   gateway   String
@@ -507,105 +560,105 @@ model IpAddress {
   vmId       String?
   ptrRecord  String?
 
-  pool       IpPool  @relation(fields: [poolId], references: [id])
-  vm         Vm?     @relation(fields: [vmId], references: [id])
+  pool IpPool @relation(fields: [poolId], references: [id])
+  vm   Vm?    @relation(fields: [vmId], references: [id])
 }
 
 model ResourcePool {
-  id            String @id @default(cuid())
+  id            String   @id @default(cuid())
   userId        String
   totalCores    Int
   totalMemoryMb Int
   totalDiskGb   Int
-  totalIps      Int    @default(0)
-  backupEnabled Boolean @default(false)
+  totalIps      Int      @default(0)
+  backupEnabled Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  user        User   @relation(fields: [userId], references: [id])
+  user        User                 @relation(fields: [userId], references: [id])
   allocations ResourceAllocation[]
 }
 
 model ResourceAllocation {
-  id          String @id @default(cuid())
-  poolId      String
-  vmId        String @unique
-  cores       Int
-  memoryMb    Int
-  diskGb      Int
-  ips         Int    @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  poolId    String
+  vmId      String   @unique
+  cores     Int
+  memoryMb  Int
+  diskGb    Int
+  ips       Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  pool        ResourcePool @relation(fields: [poolId], references: [id])
-  vm          Vm           @relation(fields: [vmId], references: [id])
+  pool ResourcePool @relation(fields: [poolId], references: [id])
+  vm   Vm           @relation(fields: [vmId], references: [id])
 }
 
 model Vm {
-  id           String   @id @default(cuid())
-  userId       String
-  name         String
-  status       VmStatus @default(provisioning)
-  proxmoxId    Int?
-  nodeId       String?
-  templateId   String?
-  cpuCores     Int
-  memoryMb     Int
-  diskGb       Int
-  suspendedAt  DateTime?
+  id              String    @id @default(cuid())
+  userId          String
+  name            String
+  status          VmStatus  @default(provisioning)
+  proxmoxId       Int?
+  nodeId          String?
+  templateId      String?
+  cpuCores        Int
+  memoryMb        Int
+  diskGb          Int
+  suspendedAt     DateTime?
   cloudInitConfig Json?
-  backupStorage String?
-  nameserver1  String?
-  nameserver2  String?
-  searchdomain String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  backupStorage   String?
+  nameserver1     String?
+  nameserver2     String?
+  searchdomain    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  user         User     @relation(fields: [userId], references: [id])
-  node         Node?    @relation(fields: [nodeId], references: [id])
-  template     VmTemplate? @relation(fields: [templateId], references: [id])
-  allocation   ResourceAllocation?
-  ipAddresses  IpAddress[]
-  snapshots    Snapshot[]
-  backups      Backup[]
+  user            User                @relation(fields: [userId], references: [id])
+  node            Node?               @relation(fields: [nodeId], references: [id])
+  template        VmTemplate?         @relation(fields: [templateId], references: [id])
+  allocation      ResourceAllocation?
+  ipAddresses     IpAddress[]
+  snapshots       Snapshot[]
+  backups         Backup[]
   resourceMetrics ResourceMetric[]
   subscription    Subscription?
   subusers        VmSubuser[]
 }
 
 model VmTemplate {
-  id           String @id @default(cuid())
-  name         String
+  id                String   @id @default(cuid())
+  name              String
   proxmoxTemplateId String
-  osType       String
-  minDiskGb    Int
-  minMemoryMb  Int
-  isActive     Boolean @default(true)
-  createdAt    DateTime @default(now())
+  osType            String
+  minDiskGb         Int
+  minMemoryMb       Int
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
 
-  vms          Vm[]
-  plans         Plan[]
+  vms   Vm[]
+  plans Plan[]
 }
 
 model ResourceMetric {
-  id        String   @id @default(cuid())
-  vmId      String?
-  nodeId    String?
-  cpuUsage  Float?
+  id           String   @id @default(cuid())
+  vmId         String?
+  nodeId       String?
+  cpuUsage     Float?
   memoryUsedMb Int?
   diskUsedGb   Int?
-  recordedAt DateTime @default(now())
+  recordedAt   DateTime @default(now())
 
-  vm        Vm?      @relation(fields: [vmId], references: [id])
-  node      Node?    @relation(fields: [nodeId], references: [id])
+  vm   Vm?   @relation(fields: [vmId], references: [id])
+  node Node? @relation(fields: [nodeId], references: [id])
 }
 
 model OperatingSystem {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
   version   String
   imageUrl  String?
-  isActive  Boolean @default(true)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 }
 
@@ -619,50 +672,50 @@ model Snapshot {
   nodeId      String?
   createdAt   DateTime       @default(now())
 
-  vm          Vm             @relation(fields: [vmId], references: [id])
-  node        Node?          @relation(fields: [nodeId], references: [id])
+  vm   Vm    @relation(fields: [vmId], references: [id])
+  node Node? @relation(fields: [nodeId], references: [id])
 }
 
 model Backup {
-  id         String       @id @default(cuid())
-  vmId       String
-  name       String
-  status     BackupStatus @default(pending)
-  storage    String       @default("local-lvm")
-  proxmoxId  String?
-  volid      String?
-  nodeId     String?
-  sizeMb     Int?
-  createdAt  DateTime     @default(now())
+  id          String       @id @default(cuid())
+  vmId        String
+  name        String
+  status      BackupStatus @default(pending)
+  storage     String       @default("local-lvm")
+  proxmoxId   String?
+  volid       String?
+  nodeId      String?
+  sizeMb      Int?
+  isLocked    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
   completedAt DateTime?
 
-  vm         Vm           @relation(fields: [vmId], references: [id])
-  node       Node?        @relation(fields: [nodeId], references: [id])
+  vm   Vm    @relation(fields: [vmId], references: [id])
+  node Node? @relation(fields: [nodeId], references: [id])
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  action    String
-  resource  String
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  resource   String
   resourceId String?
-  metadata  Json?
-  ipAddress String?
-  createdAt DateTime @default(now())
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
 
-  user      User?    @relation(fields: [userId], references: [id])
-
+  user User? @relation(fields: [userId], references: [id])
 }
 
 model VmSubuser {
-  id           String   @id @default(cuid())
-  vmId         String
-  userId       String
-  permissions  String[] @default(["power", "console"])
-  createdAt    DateTime @default(now())
+  id          String   @id @default(cuid())
+  vmId        String
+  userId      String
+  permissions String[] @default(["power", "console"])
+  createdAt   DateTime @default(now())
 
-  vm           Vm       @relation(fields: [vmId], references: [id])
-  user         User     @relation(fields: [userId], references: [id])
+  vm   Vm   @relation(fields: [vmId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
   @@unique([vmId, userId])
 }
@@ -675,7 +728,7 @@ model Notification {
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }
 
 model SupportTicket {
@@ -686,19 +739,69 @@ model SupportTicket {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  user      User         @relation(fields: [userId], references: [id])
-  messages  SupportTicketMessage[]
+  user     User                   @relation(fields: [userId], references: [id])
+  messages SupportTicketMessage[]
 }
 
 model SupportTicketMessage {
+  id          String   @id @default(cuid())
+  ticketId    String
+  userId      String
+  body        String
+  isStaffOnly Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  ticket      SupportTicket     @relation(fields: [ticketId], references: [id])
+  user        User              @relation(fields: [userId], references: [id])
+  attachments TicketAttachment[]
+}
+
+model TicketAttachment {
   id        String   @id @default(cuid())
-  ticketId  String
-  userId    String
-  body      String
+  messageId String
+  filename  String
+  mimeType  String
+  size      Int
+  path      String
   createdAt DateTime @default(now())
 
-  ticket    SupportTicket @relation(fields: [ticketId], references: [id])
-  user      User          @relation(fields: [userId], references: [id])
+  message SupportTicketMessage @relation(fields: [messageId], references: [id])
+}
+
+model NotificationPreference {
+  id     String @id @default(cuid())
+  userId String
+  type   String
+  muted  Boolean @default(false)
+
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([userId, type])
+}
+
+model KnowledgeBaseCategory {
+  id       String   @id @default(cuid())
+  name     String   @unique
+  slug     String   @unique
+  position Int      @default(0)
+  createdAt DateTime @default(now())
+
+  articles KnowledgeBaseArticle[]
+}
+
+model KnowledgeBaseArticle {
+  id         String   @id @default(cuid())
+  categoryId String
+  title      String
+  slug       String   @unique
+  body       String
+  helpful    Int      @default(0)
+  unhelpful  Int      @default(0)
+  published  Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category KnowledgeBaseCategory @relation(fields: [categoryId], references: [id])
 }
 
 model Setting {
@@ -717,15 +820,15 @@ model Location {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  nodes      Node[]
+  nodes Node[]
 }
 
 model IdempotencyKey {
-  id        String   @id @default(cuid())
-  key       String   @unique
-  action    String
-  resourceId String?
-  status    String   @default("pending")
-  createdAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  key         String    @unique
+  action      String
+  resourceId  String?
+  status      String    @default("pending")
+  createdAt   DateTime  @default(now())
   completedAt DateTime?
 }

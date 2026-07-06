@@ -3,7 +3,7 @@
 import useSWR from 'swr';
 import { useState } from 'react';
 import api from '@/lib/api';
-import { Terminal, Plus, Trash2, Copy } from 'lucide-react';
+import { Terminal, Plus, Trash2, Copy, Globe, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '@/lib/utils';
 
@@ -13,6 +13,8 @@ export default function ApiKeysPage() {
   const { data: keys, mutate } = useSWR('/api-keys', fetcher);
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState('');
+  const [allowedIps, setAllowedIps] = useState('');
+  const [notifyForeignIp, setNotifyForeignIp] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
 
@@ -20,9 +22,14 @@ export default function ApiKeysPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const { data } = await api.post('/api-keys', { name });
+      const payload: any = { name };
+      if (allowedIps.trim()) payload.allowedIps = allowedIps.trim();
+      payload.notifyForeignIp = notifyForeignIp;
+      const { data } = await api.post('/api-keys', payload);
       setNewKey(data.key);
       setName('');
+      setAllowedIps('');
+      setNotifyForeignIp(true);
       setShowAdd(false);
       mutate();
     } catch (err: any) {
@@ -40,6 +47,16 @@ export default function ApiKeysPage() {
       mutate();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to delete key');
+    }
+  };
+
+  const handleToggleIpNotify = async (id: string, current: boolean) => {
+    try {
+      await api.patch(`/api-keys/${id}`, { notifyForeignIp: !current });
+      toast.success('Updated');
+      mutate();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update');
     }
   };
 
@@ -93,6 +110,28 @@ export default function ApiKeysPage() {
               required
             />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Allowed IPs (optional CIDR, comma-separated)
+            </label>
+            <input
+              type="text"
+              value={allowedIps}
+              onChange={(e) => setAllowedIps(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+              placeholder="203.0.113.0/24, 198.51.100.1"
+            />
+            <p className="text-xs text-slate-400 mt-1">Leave empty to allow any IP</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={notifyForeignIp}
+              onChange={(e) => setNotifyForeignIp(e.target.checked)}
+              className="rounded border-slate-300 dark:border-slate-600"
+            />
+            Notify me when accessed from a new IP address
+          </label>
           <div className="flex gap-2">
             <button type="submit" disabled={submitting} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm">
               {submitting ? 'Creating...' : 'Create'}
@@ -114,17 +153,45 @@ export default function ApiKeysPage() {
           <div className="divide-y divide-slate-200 dark:divide-slate-700">
             {(keys || []).map((key: any) => (
               <div key={key.id} className="flex items-center justify-between p-4">
-                <div>
+                <div className="flex-1">
                   <p className="font-medium text-slate-900 dark:text-white">{key.name}</p>
-                  <p className="text-xs text-slate-500 font-mono mt-1">{key.prefix || key.id.slice(0, 8)}...</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Created {formatDate(key.createdAt)}</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <p className="text-xs text-slate-500 font-mono">{key.id.slice(0, 8)}...</p>
+                    <p className="text-xs text-slate-400">Created {formatDate(key.createdAt)}</p>
+                    {key.lastUsedAt && (
+                      <p className="text-xs text-slate-400">Last used {formatDate(key.lastUsedAt)}</p>
+                    )}
+                  </div>
+                  {key.allowedIps && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <Shield className="h-3 w-3 text-green-500" />
+                      <span className="text-xs text-green-600 dark:text-green-400 font-mono">{key.allowedIps}</span>
+                    </div>
+                  )}
+                  {!key.allowedIps && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <Globe className="h-3 w-3 text-slate-400" />
+                      <span className="text-xs text-slate-400">No IP restriction</span>
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={() => handleDelete(key.id)}
-                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-xs text-slate-400 cursor-pointer" title="Notify on foreign IP">
+                    <input
+                      type="checkbox"
+                      checked={key.notifyForeignIp}
+                      onChange={() => handleToggleIpNotify(key.id, key.notifyForeignIp)}
+                      className="rounded border-slate-300 dark:border-slate-600"
+                    />
+                    Notify
+                  </label>
+                  <button
+                    onClick={() => handleDelete(key.id)}
+                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

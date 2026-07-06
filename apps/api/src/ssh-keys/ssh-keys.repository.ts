@@ -11,10 +11,25 @@ export class SshKeysRepository {
     return tx ?? this.prisma;
   }
 
-  async findMany(userId: string, tx?: PrismaTx) {
+  async findMany(userId: string, search?: string, tx?: PrismaTx) {
+    const where: Record<string, unknown> = { userId, deletedAt: null };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { publicKey: { contains: search, mode: 'insensitive' } },
+        { fingerprint: { contains: search, mode: 'insensitive' } },
+      ];
+    }
     return this.db(tx).sshKey.findMany({
-      where: { userId },
+      where,
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findDeleted(userId: string, tx?: PrismaTx) {
+    return this.db(tx).sshKey.findMany({
+      where: { userId, deletedAt: { not: null } },
+      orderBy: { deletedAt: 'desc' },
     });
   }
 
@@ -22,11 +37,32 @@ export class SshKeysRepository {
     return this.db(tx).sshKey.findUnique({ where: { id } });
   }
 
-  async create(data: { userId: string; name: string; publicKey: string }, tx?: PrismaTx) {
+  async create(data: { userId: string; name: string; publicKey: string; fingerprint?: string }, tx?: PrismaTx) {
     return this.db(tx).sshKey.create({ data });
   }
 
-  async delete(id: string, tx?: PrismaTx) {
+  async softDelete(id: string, tx?: PrismaTx) {
+    return this.db(tx).sshKey.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async restore(id: string, tx?: PrismaTx) {
+    return this.db(tx).sshKey.update({
+      where: { id },
+      data: { deletedAt: null },
+    });
+  }
+
+  async hardDelete(id: string, tx?: PrismaTx) {
     return this.db(tx).sshKey.delete({ where: { id } });
+  }
+
+  async updateFingerprint(id: string, fingerprint: string, tx?: PrismaTx) {
+    return this.db(tx).sshKey.update({
+      where: { id },
+      data: { fingerprint },
+    });
   }
 }
