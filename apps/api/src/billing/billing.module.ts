@@ -9,6 +9,7 @@ import { ProxmoxModule } from '../proxmox/proxmox.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 import { AuthModule } from '../auth/auth.module';
 import { VmModule } from '../vms/vm.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { AdminModule } from '../admin/admin.module';
 import { MailModule } from '../mail/mail.module';
 
@@ -20,6 +21,7 @@ import { MailModule } from '../mail/mail.module';
     ResourcePoolModule,
     AuthModule,
     VmModule,
+    SubscriptionsModule,
     MailModule,
   ],
   controllers: [BillingController],
