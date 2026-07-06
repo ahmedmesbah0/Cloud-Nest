@@ -1,12 +1,16 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletRepository } from './wallet.repository';
+import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 
 @Injectable()
 export class WalletService {
+  private readonly logger = new Logger(WalletService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletRepo: WalletRepository,
+    private readonly jobService: ProxmoxJobService,
   ) {}
 
   async getOrCreateWallet(userId: string) {
@@ -31,7 +35,7 @@ export class WalletService {
   async credit(userId: string, amount: number, reference?: string, metadata?: Record<string, unknown>) {
     if (amount <= 0) throw new BadRequestException('Amount must be positive');
 
-    return this.prisma.$transaction(async (tx: any) => {
+    const txRecord = await this.prisma.$transaction(async (tx: any) => {
       let wallet = await this.walletRepo.findByUser(userId, false, tx);
       if (!wallet) {
         wallet = await this.walletRepo.create({ userId }, tx);
@@ -39,7 +43,7 @@ export class WalletService {
 
       await this.walletRepo.update(userId, { balance: { increment: amount } }, tx);
 
-      const txRecord = await this.walletRepo.createTransaction({
+      const record = await this.walletRepo.createTransaction({
         walletId: wallet.id,
         amount,
         type: 'credit',
@@ -57,8 +61,38 @@ export class WalletService {
         },
       });
 
-      return txRecord;
+      return record;
     });
+
+    await this.autoResumeSuspendedVms(userId);
+
+    return txRecord;
+  }
+
+  private async autoResumeSuspendedVms(userId: string) {
+    try {
+      const suspendedVms = await this.prisma.vm.findMany({
+        where: { userId, status: 'suspended', proxmoxId: { not: null } },
+        include: { subscription: true },
+      });
+
+      for (const vm of suspendedVms) {
+        if (vm.subscription?.status !== 'grace_period') continue;
+
+        await this.jobService.enqueueJob('resume-vm', {
+          vmId: vm.id,
+          proxmoxId: vm.proxmoxId,
+          node: vm.nodeId,
+        }, {
+          userId,
+          auditLog: { action: 'vm.resume.auto-payment', resource: 'vm', resourceId: vm.id },
+        });
+
+        this.logger.log(`Auto-resume queued for VM ${vm.id} (user ${userId} added funds)`);
+      }
+    } catch (error) {
+      this.logger.error(`Auto-resume check failed for user ${userId}: ${(error as Error).message}`);
+    }
   }
 
   async debit(userId: string, amount: number, reference?: string, metadata?: Record<string, unknown>) {

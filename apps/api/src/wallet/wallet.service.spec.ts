@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { WalletRepository } from './wallet.repository';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
 
 describe('WalletService', () => {
   let service: WalletService;
@@ -64,7 +65,14 @@ describe('WalletService', () => {
       }),
     };
 
+    const mockJobService = {
+      enqueueJob: jest.fn().mockResolvedValue({}),
+    };
+
     mockPrisma = {
+      vm: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       auditLog: {
         create: jest.fn(({ data }: any) => ({ id: `log-${Date.now()}`, ...data })),
       },
@@ -76,6 +84,7 @@ describe('WalletService', () => {
         WalletService,
         { provide: WalletRepository, useValue: mockRepo },
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: ProxmoxJobService, useValue: mockJobService },
       ],
     }).compile();
 
