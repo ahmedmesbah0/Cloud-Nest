@@ -3,6 +3,9 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  Inject,
+  forwardRef,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -23,11 +26,13 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReferralsService } from '../referrals/referrals.service';
 
 const totp = new TOTP({ crypto: new NobleCryptoPlugin(), base32: new ScureBase32Plugin() });
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly totpIssuer: string;
 
   constructor(
@@ -36,6 +41,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    @Inject(forwardRef(() => ReferralsService))
+    private readonly referralsService: ReferralsService,
   ) {
     this.totpIssuer = this.configService.get<string>('TOTP_ISSUER', 'CloudNest');
   }
@@ -114,7 +121,16 @@ export class AuthService {
       });
     }
 
-    return { id: user.id, email: user.email, name: user.name, isAdmin: isFirstUser };
+    let referralResult: any = null;
+    if (dto.referralCode) {
+      try {
+        referralResult = await this.referralsService.redeemReferral(user.id, dto.referralCode);
+      } catch (error) {
+        this.logger.warn(`Referral redemption failed for user ${user.id} code ${dto.referralCode}: ${(error as Error).message}`);
+      }
+    }
+
+    return { id: user.id, email: user.email, name: user.name, isAdmin: isFirstUser, referral: referralResult };
   }
 
   async verifyEmail(token: string) {

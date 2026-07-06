@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ReferralsService } from './referrals.service';
 import { ReferralsRepository } from './referrals.repository';
 import { ReferralsController } from './referrals.controller';
@@ -7,7 +7,7 @@ import { AdminModule } from '../admin/admin.module';
 import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
-  imports: [AuthModule, AdminModule, WalletModule],
+  imports: [forwardRef(() => AuthModule), AdminModule, WalletModule],
   controllers: [ReferralsController],
   providers: [ReferralsService, ReferralsRepository],
   exports: [ReferralsService],

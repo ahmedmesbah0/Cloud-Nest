@@ -1,10 +1,13 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { ReferralsRepository } from './referrals.repository';
 import { WalletService } from '../wallet/wallet.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { randomBytes } from 'node:crypto';
 
-const DEFAULT_REFERRAL_REWARD = 500; // 5.00 credits per referral
+const SETTING_REFERRER_CREDITS = 'referral.referrerCredits';
+const SETTING_REFEREE_CREDITS = 'referral.refereeCredits';
+const DEFAULT_REFERRER_REWARD = 500;
+const DEFAULT_REFEREE_REWARD = 250;
 
 @Injectable()
 export class ReferralsService {
@@ -15,6 +18,39 @@ export class ReferralsService {
     private readonly repo: ReferralsRepository,
     private readonly walletService: WalletService,
   ) {}
+
+  private async getRewardCredits(): Promise<{ referrerCredits: number; refereeCredits: number }> {
+    const rows = await this.prisma.setting.findMany({
+      where: { key: { in: [SETTING_REFERRER_CREDITS, SETTING_REFEREE_CREDITS] } },
+    });
+    const map = new Map(rows.map((r) => [r.key, Number(r.value)]));
+    return {
+      referrerCredits: map.get(SETTING_REFERRER_CREDITS) ?? DEFAULT_REFERRER_REWARD,
+      refereeCredits: map.get(SETTING_REFEREE_CREDITS) ?? DEFAULT_REFEREE_REWARD,
+    };
+  }
+
+  async getSettings(): Promise<{ referrerCredits: number; refereeCredits: number }> {
+    return this.getRewardCredits();
+  }
+
+  async updateSettings(data: { referrerCredits?: number; refereeCredits?: number }): Promise<{ referrerCredits: number; refereeCredits: number }> {
+    if (data.referrerCredits !== undefined) {
+      await this.prisma.setting.upsert({
+        where: { key: SETTING_REFERRER_CREDITS },
+        create: { key: SETTING_REFERRER_CREDITS, value: String(data.referrerCredits) },
+        update: { value: String(data.referrerCredits) },
+      });
+    }
+    if (data.refereeCredits !== undefined) {
+      await this.prisma.setting.upsert({
+        where: { key: SETTING_REFEREE_CREDITS },
+        create: { key: SETTING_REFEREE_CREDITS, value: String(data.refereeCredits) },
+        update: { value: String(data.refereeCredits) },
+      });
+    }
+    return this.getRewardCredits();
+  }
 
   // ─── Referral Code ───────────────────────────────────────────
 
@@ -85,27 +121,27 @@ export class ReferralsService {
     const alreadyReferred = await this.repo.findUsageByReferredUser(referredUserId);
     if (alreadyReferred) throw new BadRequestException('You have already used a referral code');
 
+    const rewards = await this.getRewardCredits();
+
     return this.prisma.$transaction(async (tx: any) => {
       const usage = await this.repo.createUsage({
         codeId: referralCode.id,
         referredUserId,
-        rewardCredits: DEFAULT_REFERRAL_REWARD,
+        rewardCredits: rewards.referrerCredits,
       }, tx);
 
       await this.repo.updateCode(referralCode.id, { uses: { increment: 1 } }, tx);
 
-      // Reward the referrer
       await this.walletService.credit(
         referralCode.userId,
-        DEFAULT_REFERRAL_REWARD,
+        rewards.referrerCredits,
         `referral:${code}`,
         { referredUserId, usageId: usage.id },
       );
 
-      // Reward the new user
       await this.walletService.credit(
         referredUserId,
-        DEFAULT_REFERRAL_REWARD,
+        rewards.refereeCredits,
         `referral:signup:${code}`,
         { referrerUserId: referralCode.userId },
       );
@@ -119,7 +155,8 @@ export class ReferralsService {
           metadata: {
             code,
             referrerUserId: referralCode.userId,
-            rewardCredits: DEFAULT_REFERRAL_REWARD,
+            referrerReward: rewards.referrerCredits,
+            refereeReward: rewards.refereeCredits,
           },
         },
       });
@@ -128,7 +165,8 @@ export class ReferralsService {
 
       return {
         message: 'Referral code redeemed successfully',
-        rewardCredits: DEFAULT_REFERRAL_REWARD,
+        referrerReward: rewards.referrerCredits,
+        refereeReward: rewards.refereeCredits,
       };
     });
   }

@@ -24,3 +24,17 @@ export class RedeemReferralCodeDto {
   @IsString()
   code!: string;
 }
+
+export class UpdateReferralSettingsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  referrerCredits?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  refereeCredits?: number;
+}

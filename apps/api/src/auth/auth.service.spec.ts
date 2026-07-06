@@ -26,10 +26,12 @@ import { AuthService } from './auth.service';
 import { AuthRepository } from './auth.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { ReferralsService } from '../referrals/referrals.service';
 
 describe('AuthService', () => {
   let service: AuthService;
   const mockMailService = { send: jest.fn() };
+  const mockReferralsService = { redeemReferral: jest.fn().mockResolvedValue({ referrerReward: 500, refereeReward: 250 }) };
 
   // In-memory store simulates real DB state across calls
   const store = {
@@ -180,6 +182,7 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: MailService, useValue: mockMailService },
+        { provide: ReferralsService, useValue: mockReferralsService },
       ],
     }).compile();
 
@@ -206,6 +209,7 @@ describe('AuthService', () => {
         email: 'alice@test.com',
         name: 'Alice',
         isAdmin: true,
+        referral: null,
       });
 
       // User persisted in store
@@ -235,6 +239,7 @@ describe('AuthService', () => {
         password: 'StrongP4ss!',
       });
       expect(result.name).toBeUndefined();
+      expect(result.referral).toBeNull();
     });
   });
 
