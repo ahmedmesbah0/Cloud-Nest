@@ -7,6 +7,7 @@ import { ProxmoxJobConsumer } from './proxmox-job.consumer';
 import { VmModule } from '../vms/vm.module';
 import { ResourcePoolModule } from '../resource-pool/resource-pool.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Global()
 @Module({
@@ -14,6 +15,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     forwardRef(() => VmModule),
     ResourcePoolModule,
     NotificationsModule,
+    WalletModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: {
