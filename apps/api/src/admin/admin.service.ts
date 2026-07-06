@@ -668,20 +668,16 @@ export class AdminService {
   // --- Dashboard KPIs & Alerts ---
 
   async getBillingDashboardKpis(suspensionDays = 7) {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const suspensionThreshold = new Date(Date.now() - suspensionDays * 24 * 60 * 60 * 1000);
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-
-    const weeklyReport = await this.adminRepo.aggregateAdminCreditsSince(thirtyDaysAgo);
-    const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
 
     const [
       totalBalance, activeVms, suspendedVms, graceVms,
       totalVouchers, redeemedVouchers, unredeemedVouchers, expiredVouchers,
       creditToday, creditThisMonth,
       redeemedToday, redeemedThisMonth,
-      commissionPaid, pendingCommission,
+      commissionPaid, ,
       usersAtRisk,
       suspendedOld,
       valueIssuedThisMonth,
@@ -722,6 +718,7 @@ export class AdminService {
     };
   }
 
+  async assignRole(adminUserId: string, userId: string, roleName: string) {
     await this.prisma.$transaction(async (tx: any) => {
       const role = await this.adminRepo.upsertRole(
         { name: roleName },

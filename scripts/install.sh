@@ -467,7 +467,7 @@ setup_prisma() {
   run_with_retry 3 10 npm run prisma:generate
 
   if [ -d "$INSTALL_DIR/apps/api/prisma/migrations" ]; then
-    run_with_retry 3 10 npm run prisma:migrate -- --skip-generate || npm run prisma:push
+    run_with_retry 3 10 npm run prisma:migrate || npm run prisma:push
   else
     run_with_retry 3 10 npm run prisma:push
   fi
