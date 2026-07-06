@@ -4,6 +4,7 @@ import { BillingRepository } from './billing.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
+import { IdempotencyKeyRepository } from '../bullmq/idempotency-key.repository';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -15,6 +16,7 @@ describe('BillingService', () => {
   let mockWalletService: any;
   let mockJobService: any;
   let mockNotificationsService: any;
+  let mockIdempotencyRepo: any;
 
   const store = {
     vms: new Map<string, any>(),
@@ -124,6 +126,11 @@ describe('BillingService', () => {
       $transaction: jest.fn((fn: any) => fn(mockPrisma)),
     };
 
+    mockIdempotencyRepo = {
+      findByKey: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ key: 'test', action: 'billing-hourly', status: 'completed' }),
+    };
+
     mockJobService = {
       enqueueJob: jest.fn().mockResolvedValue({ status: 'queued' }),
     };
@@ -147,6 +154,7 @@ describe('BillingService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: WalletService, useValue: mockWalletService },
         { provide: ProxmoxJobService, useValue: mockJobService },
+        { provide: IdempotencyKeyRepository, useValue: mockIdempotencyRepo },
         { provide: ResourcePoolService, useValue: mockPoolService },
         { provide: ProxmoxService, useValue: mockProxmoxService },
         { provide: NotificationsService, useValue: mockNotificationsService },
@@ -209,6 +217,54 @@ describe('BillingService', () => {
 
       const result = await service.runHourlyBilling();
       expect(result.billed).toBe(2);
+    });
+
+    it('skips VM when idempotency key already exists', async () => {
+      store.vms.set('vm-7', {
+        id: 'vm-7',
+        userId: 'user-1',
+        name: 'already-billed',
+        status: 'running',
+        cpuCores: 1,
+        memoryMb: 1024,
+        diskGb: 10,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      store.wallets.set('user-1', { id: 'wallet-1', userId: 'user-1', balance: 10000 });
+
+      // Simulate existing idempotency key (P2002)
+      mockIdempotencyRepo.create.mockRejectedValueOnce({ code: 'P2002' });
+
+      const result = await service.runHourlyBilling();
+      expect(result.billed).toBe(0);
+      expect(result.suspended).toBe(0);
+
+      const wallet = store.wallets.get('user-1');
+      expect(wallet.balance).toBe(10000);
+    });
+
+    it('creates idempotency key for each VM on successful billing', async () => {
+      store.vms.set('vm-8', {
+        id: 'vm-8',
+        userId: 'user-1',
+        name: 'tracked-vm',
+        status: 'running',
+        cpuCores: 1,
+        memoryMb: 1024,
+        diskGb: 10,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      store.wallets.set('user-1', { id: 'wallet-1', userId: 'user-1', balance: 10000 });
+
+      await service.runHourlyBilling();
+
+      expect(mockIdempotencyRepo.create).toHaveBeenCalledWith({
+        key: expect.stringContaining('billing-hourly-vm-8-'),
+        action: 'billing-hourly',
+        status: 'completed',
+      });
     });
   });
 

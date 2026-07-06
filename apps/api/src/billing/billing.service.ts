@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BillingRepository } from './billing.repository';
 import { WalletService } from '../wallet/wallet.service';
 import { ProxmoxJobService } from '../bullmq/proxmox-job.service';
+import { IdempotencyKeyRepository } from '../bullmq/idempotency-key.repository';
 import { ResourcePoolService } from '../resource-pool/resource-pool.service';
 import { ProxmoxService } from '../proxmox/proxmox.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -20,6 +21,7 @@ export class BillingService {
     private readonly billingRepo: BillingRepository,
     private readonly walletService: WalletService,
     private readonly jobService: ProxmoxJobService,
+    private readonly idempotencyRepo: IdempotencyKeyRepository,
     private readonly poolService: ResourcePoolService,
     private readonly proxmox: ProxmoxService,
     private readonly notificationsService: NotificationsService,
@@ -32,8 +34,8 @@ export class BillingService {
 
     for (const vm of activeVms) {
       try {
-        await this.billVm(vm.id);
-        result.billed++;
+        const status = await this.billVm(vm.id);
+        if (status === 'billed') result.billed++;
       } catch (error) {
         this.logger.error(`Failed to bill VM ${vm.id}: ${(error as Error).message}`);
       }
@@ -57,9 +59,26 @@ export class BillingService {
     return result;
   }
 
-  private async billVm(vmId: string) {
+  private async billVm(vmId: string): Promise<'billed' | 'skipped'> {
     const vm = await this.billingRepo.findVmById(vmId);
-    if (!vm || vm.status === 'provisioning') return;
+    if (!vm || vm.status === 'provisioning') return 'skipped';
+
+    const hourBucket = Math.floor(Date.now() / 3600000);
+    const idempotencyKey = `billing-hourly-${vmId}-${hourBucket}`;
+
+    try {
+      await this.idempotencyRepo.create({
+        key: idempotencyKey,
+        action: 'billing-hourly',
+        status: 'completed',
+      });
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        this.logger.debug(`VM ${vmId} already billed for hour bucket ${hourBucket}, skipping`);
+        return 'skipped';
+      }
+      throw error;
+    }
 
     const hourlyCost = calculateHourlyCost(vm.cpuCores, vm.memoryMb, vm.diskGb);
 
@@ -73,7 +92,7 @@ export class BillingService {
     } catch {
       this.logger.warn(`Insufficient balance for VM ${vmId}, entering grace period`);
       await this.enterGracePeriod(vmId);
-      return;
+      return 'skipped';
     }
 
     const today = new Date();
@@ -93,6 +112,7 @@ export class BillingService {
     ]);
 
     this.logger.log(`Billed VM ${vmId}: ${hourlyCost} cents`);
+    return 'billed';
   }
 
   private async createInvoice(

@@ -45,6 +45,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
     }),
   ],
   providers: [ProxmoxJobService, IdempotencyKeyRepository, ProxmoxJobConsumer],
-  exports: [BullModule, ProxmoxJobService],
+  exports: [BullModule, ProxmoxJobService, IdempotencyKeyRepository],
 })
 export class BullmqModule {}
